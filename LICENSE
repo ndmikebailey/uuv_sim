@@ -1,0 +1,16 @@
+Academic Research Use Notice
+
+Copyright (c) 2026
+
+This repository is an academic research project artifact for UUV mission
+planning, energy estimation, and validation workflow development.
+
+The software is provided for research, review, and educational use only. It is
+not an operational, tactical, safety-of-navigation, or mission-command system.
+No warranty is provided, express or implied, including warranties of accuracy,
+fitness for purpose, or suitability for real-world operations.
+
+Use of this software for physical testing requires independent engineering
+review, validated vehicle data, controlled test procedures, and appropriate
+safety oversight.
+

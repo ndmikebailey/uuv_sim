@@ -1,0 +1,53 @@
+{
+  "REMUS 300 - 1.5 kWh": {
+    "battery_kwh": 1.5,
+    "estimated_endurance_hr": 10.0,
+    "nominal_speed_kts": 3.5,
+    "max_speed_kts": 5.0,
+    "recharge_hr": 6.0,
+    "usable_fraction": 0.88,
+    "usable_basis": "Planning assumption: 88% usable Li-ion energy after reserve / battery-health allowance.",
+    "source_note": "Manufacturer-published REMUS 300M datasheet"
+  },
+  "REMUS 300 - 3.0 kWh": {
+    "battery_kwh": 3.0,
+    "estimated_endurance_hr": 20.0,
+    "nominal_speed_kts": 3.5,
+    "max_speed_kts": 5.0,
+    "recharge_hr": 12.0,
+    "usable_fraction": 0.88,
+    "usable_basis": "Planning assumption: 88% usable Li-ion energy after reserve / battery-health allowance.",
+    "source_note": "Manufacturer-published REMUS 300M datasheet"
+  },
+  "REMUS 300 - 4.5 kWh": {
+    "battery_kwh": 4.5,
+    "estimated_endurance_hr": 30.0,
+    "nominal_speed_kts": 3.5,
+    "max_speed_kts": 5.0,
+    "recharge_hr": 18.0,
+    "usable_fraction": 0.88,
+    "usable_basis": "Planning assumption: 88% usable Li-ion energy after reserve / battery-health allowance.",
+    "source_note": "Manufacturer-published REMUS 300M datasheet"
+  },
+  "IVER4": {
+    "battery_kwh": 3.0,
+    "estimated_endurance_hr": 20.0,
+    "nominal_speed_kts": 3.5,
+    "max_speed_kts": 5.0,
+    "recharge_hr": 12.0,
+    "usable_fraction": 0.85,
+    "usable_basis": "Placeholder planning assumption: 85% usable energy until validated platform battery data are loaded.",
+    "source_note": "PLACEHOLDER - replace with validated IVER4 data"
+  },
+  "Knifefish": {
+    "battery_kwh": 8.0,
+    "estimated_endurance_hr": 16.0,
+    "nominal_speed_kts": 3.0,
+    "max_speed_kts": 5.0,
+    "recharge_hr": 16.0,
+    "usable_fraction": 0.85,
+    "usable_basis": "Placeholder planning assumption: 85% usable energy until validated platform battery data are loaded.",
+    "source_note": "PLACEHOLDER - replace with validated Knifefish data"
+  }
+}
+
