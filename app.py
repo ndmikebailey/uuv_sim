@@ -4,5 +4,5 @@ from app.main import demo, launch
 
 
 if __name__ == "__main__":
-    launch(share=True)
-    
+    launch()
+

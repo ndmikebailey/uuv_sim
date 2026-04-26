@@ -678,16 +678,17 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
         )
     return demo
 
-
 demo = create_demo()
 
+
 def launch(**kwargs) -> None:
-   ## """Launch the app with Gradio-compatible options."""
-        demo.launch(
+    """Launch the Gradio app."""
+    demo.launch(
         css=CUSTOM_CSS,
         js=CUSTOM_JS,
-        **kwargs
+        **kwargs,
     )
+
 
 if __name__ == "__main__":
     launch()
