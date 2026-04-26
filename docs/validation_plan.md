@@ -13,7 +13,7 @@ The v3.0-alpha build supports controlled dry runs and early physical-test planni
 5. Override METOC inputs manually and confirm outputs change.
 6. Enter a known Monte Carlo seed and confirm repeatability.
 7. Confirm run-record JSON and results CSV export.
-8. Confirm mission map snapshot and search-pattern overlay render.
+8. Confirm mission map snapshot renders and the search-pattern overlay appears for Area Search / MCM only.
 
 ## Physical-Test Record Fields
 

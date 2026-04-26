@@ -33,6 +33,75 @@ def bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return (math.degrees(math.atan2(y, x)) + 360) % 360
 
 
+def orientation_to_axis(orientation: str) -> str:
+    """Normalize search-orientation labels to a plotting axis."""
+    normalized = orientation.strip().lower()
+    if normalized in {"north-south", "n/s", "ns", "vertical"}:
+        return "vertical"
+    if normalized in {"east-west", "e/w", "ew", "horizontal"}:
+        return "horizontal"
+    return "vertical"
+
+
+def geodesic_polyline_length_km(points: list[tuple[float, float]]) -> float:
+    """Return the geodesic length of a lat/lon polyline."""
+    if len(points) < 2:
+        return 0.0
+    return sum(
+        haversine_km(points[index][0], points[index][1], points[index + 1][0], points[index + 1][1])
+        for index in range(len(points) - 1)
+    )
+
+
+def geodesic_closed_perimeter_km(points: list[tuple[float, float]]) -> float:
+    """Return the geodesic perimeter of a closed lat/lon polygon."""
+    if len(points) < 3:
+        return 0.0
+    perimeter = geodesic_polyline_length_km(points)
+    perimeter += haversine_km(points[-1][0], points[-1][1], points[0][0], points[0][1])
+    return perimeter
+
+
+def isr_path_distance_per_loop_km_from_line(points: list[tuple[float, float]]) -> float:
+    """Return one ISR out-and-back loop distance for a line route."""
+    return geodesic_polyline_length_km(points) * 2.0
+
+
+def isr_path_distance_per_loop_km_from_polygon(points: list[tuple[float, float]]) -> float:
+    """Return one ISR perimeter loop distance for a polygon patrol route."""
+    return geodesic_closed_perimeter_km(points)
+
+
+def isr_path_distance_per_loop_km_from_rectangle(width_km: float, height_km: float) -> float:
+    """Return one ISR perimeter loop distance for a rectangle patrol route."""
+    return 2.0 * (max(width_km, 0.0) + max(height_km, 0.0))
+
+
+def isr_path_distance_per_loop_km(area: MissionArea) -> float:
+    """Return the ISR patrol-loop distance for line, polygon, or rectangle geometry."""
+    if area.geometry_type == "line":
+        if len(area.route_points) >= 2:
+            return isr_path_distance_per_loop_km_from_line([(point.lat, point.lon) for point in area.route_points])
+        return max(float(area.route_distance_km or 0.0), 0.0) * 2.0
+
+    if area.geometry_type == "polygon" and len(area.vertices) >= 3:
+        return isr_path_distance_per_loop_km_from_polygon([(point.lat, point.lon) for point in area.vertices])
+
+    if area.geometry_type == "rectangle":
+        if area.width_km is not None and area.height_km is not None:
+            return isr_path_distance_per_loop_km_from_rectangle(float(area.width_km), float(area.height_km))
+        if len(area.vertices) >= 4:
+            return geodesic_closed_perimeter_km([(point.lat, point.lon) for point in area.vertices])
+
+    if len(area.local_polygon_km) >= 3:
+        points = [(point.x, point.y) for point in area.local_polygon_km]
+        return sum(
+            math.hypot(points[(index + 1) % len(points)][0] - points[index][0], points[(index + 1) % len(points)][1] - points[index][1])
+            for index in range(len(points))
+        )
+    return 0.0
+
+
 def clean_latlon_vertices(raw_vertices: Any) -> list[LatLon]:
     """Normalize mixed Leaflet vertex payloads into ``LatLon`` values."""
     vertices: list[LatLon] = []
@@ -330,7 +399,7 @@ def clipped_search_lanes(area: MissionArea, track_spacing_m: float, orientation:
     segments: list[tuple[float, float, float, float]] = []
     lane_count = 0
 
-    if orientation == "North-South":
+    if orientation_to_axis(orientation) == "vertical":
         for lane_index, x in enumerate(lane_positions(min_x, max_x, spacing_km)):
             intervals = vertical_intervals(points, x)
             if intervals:

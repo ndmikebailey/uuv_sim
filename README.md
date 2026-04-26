@@ -1,6 +1,17 @@
+---
+title: UUV Mission Planning and Energy Simulator
+emoji: 🌊
+colorFrom: blue
+colorTo: gray
+sdk: gradio
+sdk_version: 6.13.0
+python_version: 3.11
+app_file: app.py
+pinned: false
+---
 # UUV Mission Planning and Energy Simulator
 
-`v3.0-alpha` is a Gradio-based research tool for planning single-UUV missions, estimating energy requirements, and reviewing mission geometry with METOC context.
+`v3.1-beta-dev` is a Gradio-based research tool for planning single-UUV missions, estimating energy requirements, and reviewing mission geometry with METOC context.
 
 ## Status
 
@@ -42,7 +53,7 @@ Each run exports:
 * energy/battery tables
 * METOC report card
 * mission map snapshot
-* search-pattern overlay for ISR / Area Search / MCM
+* search-pattern overlay for Area Search / MCM only
 
 ## Tests
 

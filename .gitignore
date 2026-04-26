@@ -1,8 +1,22 @@
+# Python
 __pycache__/
 *.py[cod]
-.gradio/
-.venv/
-venv/
 .pytest_cache/
 .mypy_cache/
+
+# Local environments
+.venv/
+venv/
+.env
+
+# Gradio / runtime
+.gradio/
 runs/
+
+# OS / editor
+.DS_Store
+.vscode/settings.json
+
+# Large/generated outputs
+*.log
+*.tmp

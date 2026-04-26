@@ -54,6 +54,10 @@ class EnergyReproducibilityTests(unittest.TestCase):
         )
         self.assertEqual(first.summary["rng_seed"], 12345)
         self.assertListEqual(first.energy_samples_kwh.tolist(), second.energy_samples_kwh.tolist())
+        self.assertEqual(first.summary["recommended_track_orientation"], "N/A")
+        self.assertGreater(float(first.summary["isr_loop_distance_km"]), 0.0)
+        self.assertGreater(float(first.summary["isr_max_time_on_station_hr"]), 0.0)
+        self.assertIn("Estimated ISR time on station", [row[0] for row in first.result_rows])
 
     def test_negative_seed_is_rejected(self) -> None:
         """Negative seeds should fail visibly instead of relying on NumPy errors."""

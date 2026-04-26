@@ -24,6 +24,22 @@ def safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def parse_rng_seed(seed_text: str | None) -> int | None:
+    """Parse an optional non-negative Monte Carlo random seed."""
+    if seed_text is None:
+        return None
+    cleaned = str(seed_text).strip()
+    if cleaned == "":
+        return None
+    try:
+        seed = int(cleaned)
+    except ValueError as exc:
+        raise ValueError("Monte Carlo seed must be a non-negative integer or blank.") from exc
+    if seed < 0:
+        raise ValueError("Monte Carlo seed must be non-negative.")
+    return seed
+
+
 def parse_json_object(text: str) -> dict[str, Any]:
     """Parse a JSON object from text and raise a useful ``ValueError``."""
     if not text or not text.strip():
@@ -45,4 +61,3 @@ def fmt(value: Any, digits: int = 3) -> str:
         return f"{float(value):.{digits}f}"
     except (TypeError, ValueError):
         return str(value)
-

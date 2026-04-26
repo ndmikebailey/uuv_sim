@@ -64,8 +64,8 @@ class EnvironmentData:
     def table_rows(self, centroid_lat: float, centroid_lon: float) -> list[tuple[str, object, str]]:
         """Return operator-facing environment rows."""
         return [
-            ("Centroid latitude", centroid_lat, "deg"),
-            ("Centroid longitude", centroid_lon, "deg"),
+            ("Environment lookup latitude", centroid_lat, "deg"),
+            ("Environment lookup longitude", centroid_lon, "deg"),
             ("Current speed mean", self.current_speed_kts_mean, "kts"),
             ("Current direction mean", self.current_direction_deg_mean, "deg"),
             ("Sea surface temperature", self.sea_surface_temp_c_mean, "deg C"),

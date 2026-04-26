@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 APP_NAME = "UUV Mission Planning and Energy Simulator"
-APP_VERSION = "v3.0-alpha"
-ENERGY_MODEL_VERSION = "energy_model_v3_0_alpha"
+APP_VERSION = "v3.1-beta-dev"
+ENERGY_MODEL_VERSION = "energy_model_v3_1_beta_dev"
 VEHICLE_CATALOG_VERSION = "vehicle_catalog_v3_0_alpha"
 USER_AGENT = "uuv-capstone-gradio/0.3 (planning-scale research tool)"
 REQUEST_TIMEOUT = 25
@@ -15,7 +15,9 @@ OPEN_METEO_WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_MARINE_URL = "https://marine-api.open-meteo.com/v1/marine"
 
 MISSION_TYPES = ["ISR", "Area Search / MCM", "Payload Delivery"]
-SEARCH_MISSIONS = {"ISR", "Area Search / MCM"}
+ISR_MISSIONS = {"ISR", "Intelligence, Surveillance, and Reconnaissance"}
+PAYLOAD_MISSIONS = {"Payload", "Payload Delivery", "Delivery"}
+SEARCH_MISSIONS = {"Area Search / MCM", "Area Search", "MCM", "Mine Countermeasures", "Search"}
 
 REGION_PRESETS = {
     "Guam": (13.4443, 144.7937, 8),

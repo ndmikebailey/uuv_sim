@@ -9,6 +9,7 @@ from utils.constants import REGION_PRESETS
 
 def build_leaflet_iframe(region_name: str = "Guam") -> str:
     """Return a Leaflet iframe that emits raw geometry JSON to Gradio."""
+    # TODO: Restore multi-area Search/MCM geometry support so users can draw multiple search boxes/polygons around coastlines. Aggregate total area and show all selected regions in the Results map.
     lat, lon, zoom = REGION_PRESETS.get(region_name, REGION_PRESETS["Guam"])
     inner_html = f"""
 <!DOCTYPE html>
@@ -33,12 +34,12 @@ def build_leaflet_iframe(region_name: str = "Guam") -> str:
 </head>
 <body>
   <div id="map"></div>
-  <div class="note">Draw one rectangle or polygon for ISR / Area Search / MCM, or one line for Payload Delivery.</div>
+  <div class="note">Draw a line, rectangle, or polygon for ISR; draw a rectangle or polygon for Area Search / MCM; draw a line for Payload Delivery.</div>
   <div id="output">
     <div class="snap-grid">
-      <div class="snap-card"><div class="snap-label">Mission Geometry</div><div class="snap-value">Not loaded</div><div class="snap-sub">Draw a rectangle, polygon, or line.</div></div>
+      <div class="snap-card"><div class="snap-label">Selected Geometry</div><div class="snap-value">Not loaded</div><div class="snap-sub">Draw a rectangle, polygon, or line.</div></div>
       <div class="snap-card"><div class="snap-label">Area / Route</div><div class="snap-value">--</div><div class="snap-sub">Waiting on mission geometry.</div></div>
-      <div class="snap-card"><div class="snap-label">Centroid</div><div class="snap-value">--</div><div class="snap-sub">Waiting on mission geometry.</div></div>
+      <div class="snap-card"><div class="snap-label">Geometry center</div><div class="snap-value">--</div><div class="snap-sub">Waiting on mission geometry.</div></div>
     </div>
   </div>
   <pre id="raw_output"></pre>
@@ -148,15 +149,15 @@ def build_leaflet_iframe(region_name: str = "Guam") -> str:
     }}
     function snapshotHtml(summary) {{
       if (!summary || summary.error) {{
-        return '<div class="snap-grid"><div class="snap-card"><div class="snap-label">Mission Geometry</div><div class="snap-value">Error</div><div class="snap-sub">Redraw geometry.</div></div><div class="snap-card"><div class="snap-label">Area / Route</div><div class="snap-value">--</div><div class="snap-sub">No usable geometry.</div></div><div class="snap-card"><div class="snap-label">Centroid</div><div class="snap-value">--</div><div class="snap-sub">No lookup point.</div></div></div>';
+        return '<div class="snap-grid"><div class="snap-card"><div class="snap-label">Selected Geometry</div><div class="snap-value">Error</div><div class="snap-sub">Redraw geometry.</div></div><div class="snap-card"><div class="snap-label">Area / Route</div><div class="snap-value">--</div><div class="snap-sub">No usable geometry.</div></div><div class="snap-card"><div class="snap-label">Geometry center</div><div class="snap-value">--</div><div class="snap-sub">No geometry center.</div></div></div>';
       }}
       if (summary.geometry_type === 'line') {{
-        return '<div class="snap-grid"><div class="snap-card"><div class="snap-label">Mission Geometry</div><div class="snap-value">Payload Route</div><div class="snap-sub">Route points captured.</div></div><div class="snap-card"><div class="snap-label">Route</div><div class="snap-value">' + summary.route_distance_km + ' km</div><div class="snap-sub">Heading: ' + summary.route_heading_deg + ' deg</div></div><div class="snap-card"><div class="snap-label">Centroid</div><div class="snap-value">' + summary.centroid_lat + ', ' + summary.centroid_lon + '</div><div class="snap-sub">Backend recomputes on mission load.</div></div></div>';
+        return '<div class="snap-grid"><div class="snap-card"><div class="snap-label">Selected Geometry</div><div class="snap-value">Route</div><div class="snap-sub">Route points captured.</div></div><div class="snap-card"><div class="snap-label">Route</div><div class="snap-value">' + summary.route_distance_km + ' km</div><div class="snap-sub">Heading: ' + summary.route_heading_deg + ' deg</div></div><div class="snap-card"><div class="snap-label">Geometry center</div><div class="snap-value">' + summary.centroid_lat + ', ' + summary.centroid_lon + '</div><div class="snap-sub">Backend recomputes on mission load.</div></div></div>';
       }}
       const label = summary.geometry_type === 'polygon' ? 'Polygon' : 'Rectangle';
       const areaText = summary.area_km2 ? summary.area_km2 + ' sq km' : summary.vertices.length + ' pts';
-      const detailText = summary.width_km && summary.height_km ? 'Box: ' + summary.width_km + ' x ' + summary.height_km + ' km' : 'Backend computes area on mission load.';
-      return '<div class="snap-grid"><div class="snap-card"><div class="snap-label">Mission Geometry</div><div class="snap-value">Search Area</div><div class="snap-sub">' + label + ' captured.</div></div><div class="snap-card"><div class="snap-label">Area / Shape</div><div class="snap-value">' + areaText + '</div><div class="snap-sub">' + detailText + '</div></div><div class="snap-card"><div class="snap-label">Centroid</div><div class="snap-value">' + summary.centroid_lat + ', ' + summary.centroid_lon + '</div><div class="snap-sub">Backend recomputes on mission load.</div></div></div>';
+      const detailText = summary.width_km && summary.height_km ? 'Bounding box: ' + summary.width_km + ' x ' + summary.height_km + ' km' : 'Backend computes area on mission load.';
+      return '<div class="snap-grid"><div class="snap-card"><div class="snap-label">Selected Geometry</div><div class="snap-value">' + label + '</div><div class="snap-sub">' + label + ' captured.</div></div><div class="snap-card"><div class="snap-label">Area / Shape</div><div class="snap-value">' + areaText + '</div><div class="snap-sub">' + detailText + '</div></div><div class="snap-card"><div class="snap-label">Geometry center</div><div class="snap-value">' + summary.centroid_lat + ', ' + summary.centroid_lon + '</div><div class="snap-sub">Backend recomputes on mission load.</div></div></div>';
     }}
     function sendGeometry(summary) {{
       document.getElementById("raw_output").textContent = JSON.stringify(summary, null, 2);
