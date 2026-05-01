@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 APP_NAME = "UUV Mission Planning and Energy Simulator"
-APP_VERSION = "v3.1-beta-dev"
-ENERGY_MODEL_VERSION = "energy_model_v3_1_beta_dev"
-VEHICLE_CATALOG_VERSION = "vehicle_catalog_v3_0_alpha"
+APP_VERSION = "v3.2-model-validation-dev"
+ENERGY_MODEL_VERSION = "energy_model_v3_2_model_validation_dev"
+VEHICLE_CATALOG_VERSION = "vehicle_catalog_v3_2_public_baseline"
 USER_AGENT = "uuv-capstone-gradio/0.3 (planning-scale research tool)"
 REQUEST_TIMEOUT = 25
 MONTE_CARLO_RUNS = 100

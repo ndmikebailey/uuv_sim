@@ -1,0 +1,77 @@
+{
+  "schema_note": "Supplemental metadata only. Do not load this file through the current VehicleState loader unless the loader is extended to ignore extra fields.",
+  "planning_assumptions": {
+    "usable_fraction": 0.88,
+    "usable_fraction_basis": "Engineering planning factor supplied by project team to account for reserve and battery health until platform-specific data are available.",
+    "estimated_recharge_hr_rule": "Use manufacturer recharge time when published. Otherwise use recharge_hr = 4 * battery_kwh as a planning estimate.",
+    "remus_600_status": "Not included; no public source/hard numbers were provided in this file set."
+  },
+  "vehicles": {
+    "REMUS 100B - 1.5 kWh": {
+      "battery_kwh": 1.5,
+      "endurance_hr": 8.0,
+      "nominal_speed_kts": 3.0,
+      "max_speed_kts": 4.5,
+      "recharge_hr": 6.0,
+      "source_confidence": "mixed_public_and_planning_assumption",
+      "source_note": "Public REMUS 100B datasheet baseline; verify against official HII source before final publication."
+    },
+    "REMUS 300 - 1.5 kWh": {
+      "battery_kwh": 1.5,
+      "endurance_hr": 10.0,
+      "nominal_speed_kts": 3.0,
+      "max_speed_kts": 4.0,
+      "recharge_hr": 6.0,
+      "source_confidence": "manufacturer_public"
+    },
+    "REMUS 300 - 3.0 kWh Standard": {
+      "battery_kwh": 3.0,
+      "endurance_hr": 20.0,
+      "nominal_speed_kts": 3.0,
+      "max_speed_kts": 4.0,
+      "recharge_hr": 12.0,
+      "source_confidence": "manufacturer_public"
+    },
+    "REMUS 300 - 4.5 kWh": {
+      "battery_kwh": 4.5,
+      "endurance_hr": 30.0,
+      "nominal_speed_kts": 3.0,
+      "max_speed_kts": 4.0,
+      "recharge_hr": 18.0,
+      "source_confidence": "manufacturer_public"
+    },
+    "Bluefin-9 - 1.5 kWh": {
+      "battery_kwh": 1.5,
+      "endurance_hr": 12.0,
+      "nominal_speed_kts": 3.0,
+      "max_speed_kts": 5.0,
+      "recharge_hr": 6.0,
+      "source_confidence": "manufacturer_public_with_recharge_assumption"
+    },
+    "Bluefin-12D - 7.5 kWh": {
+      "battery_kwh": 7.5,
+      "endurance_hr": 30.0,
+      "nominal_speed_kts": 3.0,
+      "max_speed_kts": 5.0,
+      "recharge_hr": 30.0,
+      "source_confidence": "manufacturer_public_with_recharge_assumption"
+    },
+    "Iver3 EP - 0.8 kWh": {
+      "battery_kwh": 0.8,
+      "endurance_hr": 8.0,
+      "nominal_speed_kts": 2.5,
+      "max_speed_kts": 4.0,
+      "recharge_hr": 3.2,
+      "source_confidence": "manufacturer_public_with_recharge_assumption",
+      "note": "Uses conservative low end of the public 8-14 hr endurance range."
+    },
+    "Iver4 580 - 0.78 kWh": {
+      "battery_kwh": 0.78,
+      "endurance_hr": 6.0,
+      "nominal_speed_kts": 4.5,
+      "max_speed_kts": 5.0,
+      "recharge_hr": 3.12,
+      "source_confidence": "manufacturer_public_with_recharge_assumption"
+    }
+  }
+}

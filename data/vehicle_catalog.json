@@ -1,53 +1,82 @@
 {
+  "REMUS 100B - 1.5 kWh": {
+    "battery_kwh": 1.5,
+    "estimated_endurance_hr": 8.0,
+    "nominal_speed_kts": 3.0,
+    "max_speed_kts": 4.5,
+    "recharge_hr": 6.0,
+    "usable_fraction": 0.88,
+    "usable_basis": "Planning assumption: 88% usable Li-ion energy after reserve / battery-health allowance; update if platform-specific battery health/reserve data are provided.",
+    "source_note": "Public REMUS 100B datasheet baseline: 1.5 kWh rechargeable Li-ion, 8 hr estimated endurance, 0-4.5 kt speed, 6 hr recharge. Verify against official HII source before final publication."
+  },
   "REMUS 300 - 1.5 kWh": {
     "battery_kwh": 1.5,
     "estimated_endurance_hr": 10.0,
-    "nominal_speed_kts": 3.5,
-    "max_speed_kts": 5.0,
+    "nominal_speed_kts": 3.0,
+    "max_speed_kts": 4.0,
     "recharge_hr": 6.0,
     "usable_fraction": 0.88,
-    "usable_basis": "Planning assumption: 88% usable Li-ion energy after reserve / battery-health allowance.",
-    "source_note": "Manufacturer-published REMUS 300M datasheet"
+    "usable_basis": "Planning assumption: 88% usable Li-ion energy after reserve / battery-health allowance; update if platform-specific battery health/reserve data are provided.",
+    "source_note": "HII REMUS 300 datasheet: 1.5 kWh option, 10 hr estimated endurance at 3.0 kt, 55 km range, 6 hr recharge, speed 0-4 kt."
   },
-  "REMUS 300 - 3.0 kWh": {
+  "REMUS 300 - 3.0 kWh Standard": {
     "battery_kwh": 3.0,
     "estimated_endurance_hr": 20.0,
-    "nominal_speed_kts": 3.5,
-    "max_speed_kts": 5.0,
+    "nominal_speed_kts": 3.0,
+    "max_speed_kts": 4.0,
     "recharge_hr": 12.0,
     "usable_fraction": 0.88,
-    "usable_basis": "Planning assumption: 88% usable Li-ion energy after reserve / battery-health allowance.",
-    "source_note": "Manufacturer-published REMUS 300M datasheet"
+    "usable_basis": "Planning assumption: 88% usable Li-ion energy after reserve / battery-health allowance; update if platform-specific battery health/reserve data are provided.",
+    "source_note": "HII REMUS 300 datasheet: 3.0 kWh standard option, 20 hr estimated endurance at 3.0 kt, 110 km range, 12 hr recharge, speed 0-4 kt."
   },
   "REMUS 300 - 4.5 kWh": {
     "battery_kwh": 4.5,
     "estimated_endurance_hr": 30.0,
-    "nominal_speed_kts": 3.5,
-    "max_speed_kts": 5.0,
+    "nominal_speed_kts": 3.0,
+    "max_speed_kts": 4.0,
     "recharge_hr": 18.0,
     "usable_fraction": 0.88,
-    "usable_basis": "Planning assumption: 88% usable Li-ion energy after reserve / battery-health allowance.",
-    "source_note": "Manufacturer-published REMUS 300M datasheet"
+    "usable_basis": "Planning assumption: 88% usable Li-ion energy after reserve / battery-health allowance; update if platform-specific battery health/reserve data are provided.",
+    "source_note": "HII REMUS 300 datasheet: 4.5 kWh option, 30 hr estimated endurance at 3.0 kt, 165 km range, 18 hr recharge, speed 0-4 kt."
   },
-  "IVER4": {
-    "battery_kwh": 3.0,
-    "estimated_endurance_hr": 20.0,
-    "nominal_speed_kts": 3.5,
-    "max_speed_kts": 5.0,
-    "recharge_hr": 12.0,
-    "usable_fraction": 0.85,
-    "usable_basis": "Placeholder planning assumption: 85% usable energy until validated platform battery data are loaded.",
-    "source_note": "PLACEHOLDER - replace with validated IVER4 data"
-  },
-  "Knifefish": {
-    "battery_kwh": 8.0,
-    "estimated_endurance_hr": 16.0,
+  "Bluefin-9 - 1.5 kWh": {
+    "battery_kwh": 1.5,
+    "estimated_endurance_hr": 12.0,
     "nominal_speed_kts": 3.0,
     "max_speed_kts": 5.0,
-    "recharge_hr": 16.0,
-    "usable_fraction": 0.85,
-    "usable_basis": "Placeholder planning assumption: 85% usable energy until validated platform battery data are loaded.",
-    "source_note": "PLACEHOLDER - replace with validated Knifefish data"
+    "recharge_hr": 6.0,
+    "usable_fraction": 0.88,
+    "usable_basis": "Planning assumption: 88% usable Li-ion energy after reserve / battery-health allowance; update if platform-specific battery health/reserve data are provided.",
+    "source_note": "Bluefin-9 public technical sheet: 1.5 kWh total energy, 12 hr endurance at 3 kt, speed up to 5 kt. Recharge not published; modeled as 4 hr per kWh planning estimate."
+  },
+  "Bluefin-12D - 7.5 kWh": {
+    "battery_kwh": 7.5,
+    "estimated_endurance_hr": 30.0,
+    "nominal_speed_kts": 3.0,
+    "max_speed_kts": 5.0,
+    "recharge_hr": 30.0,
+    "usable_fraction": 0.88,
+    "usable_basis": "Planning assumption: 88% usable Li-ion energy after reserve / battery-health allowance; update if platform-specific battery health/reserve data are provided.",
+    "source_note": "Bluefin-12D public technical sheet: 7.5 kWh total energy from five 1.5 kWh packs, 30 hr endurance at 3 kt, speed up to 5 kt. Recharge not published; modeled as 4 hr per kWh planning estimate."
+  },
+  "Iver3 EP - 0.8 kWh": {
+    "battery_kwh": 0.8,
+    "estimated_endurance_hr": 8.0,
+    "nominal_speed_kts": 2.5,
+    "max_speed_kts": 4.0,
+    "recharge_hr": 3.2,
+    "usable_fraction": 0.88,
+    "usable_basis": "Planning assumption: 88% usable Li-ion energy after reserve / battery-health allowance; update if platform-specific battery health/reserve data are provided.",
+    "source_note": "L3Harris Iver3 public specification page: 800 Wh Li-ion battery section, 8-14 hr endurance at 2.5 kt, speed 1-4 kt. Model uses 8 hr conservative endurance and 4 hr per kWh recharge estimate."
+  },
+  "Iver4 580 - 0.78 kWh": {
+    "battery_kwh": 0.78,
+    "estimated_endurance_hr": 6.0,
+    "nominal_speed_kts": 4.5,
+    "max_speed_kts": 5.0,
+    "recharge_hr": 3.12,
+    "usable_fraction": 0.88,
+    "usable_basis": "Planning assumption: 88% usable Li-ion energy after reserve / battery-health allowance; update if platform-specific battery health/reserve data are provided.",
+    "source_note": "L3Harris Iver4 580 public specification page: 780 Wh Li-ion rechargeable section, 6 hr endurance, up to 4.5 kt survey speed and >5 kt sprint. Recharge not published; modeled as 4 hr per kWh planning estimate."
   }
 }
-

@@ -106,6 +106,70 @@ def isr_current_power_penalty(current_speed_kts: float, endurance_speed_kts: flo
     return 0.08 * min(max(current_speed_kts, 0.0) / max(endurance_speed_kts, 0.1), 2.0)
 
 
+def estimate_power_at_speed_kw(
+    vehicle: VehicleState,
+    speed_kts: float,
+    hotel_fraction: float = 0.35,
+    speed_exponent: float = 3.0,
+) -> float:
+    """Estimate UUV power draw at requested speed using fixed hotel load plus cubic propulsion scaling."""
+    nominal_speed = max(vehicle.nominal_speed_kts, 0.1)
+    requested_speed = max(speed_kts, 0.1)
+    baseline_power = vehicle.average_power_kw
+    bounded_hotel_fraction = min(max(hotel_fraction, 0.0), 1.0)
+    hotel_kw = baseline_power * bounded_hotel_fraction
+    propulsion_kw_nominal = baseline_power * (1.0 - bounded_hotel_fraction)
+    speed_ratio = requested_speed / nominal_speed
+    return hotel_kw + propulsion_kw_nominal * (speed_ratio ** speed_exponent)
+
+
+def compute_stockpile_requirement(
+    conservative_energy_kwh: float,
+    usable_battery_per_set_kwh: float,
+    missions_per_week: float,
+    planning_horizon_days: float,
+    generator_efficiency: float = 0.84,
+    fuel_energy_kwh_per_gal: float = 38.0,
+) -> dict[str, float]:
+    """Estimate battery stockpile and recharge fuel requirements for a planning horizon."""
+    missions_in_horizon = max(missions_per_week, 0.0) * max(planning_horizon_days, 0.0) / 7.0
+    total_mission_energy_kwh = max(conservative_energy_kwh, 0.0) * missions_in_horizon
+    usable_per_set = max(usable_battery_per_set_kwh, 0.001)
+    generator_eff = max(generator_efficiency, 0.001)
+    fuel_energy = max(fuel_energy_kwh_per_gal, 0.001)
+    generator_input_energy_kwh = total_mission_energy_kwh / generator_eff
+    return {
+        "missions_in_horizon": missions_in_horizon,
+        "total_mission_energy_kwh": total_mission_energy_kwh,
+        "total_mission_energy_joules": total_mission_energy_kwh * 3_600_000.0,
+        "battery_sets_without_recharge": float(math.ceil(total_mission_energy_kwh / usable_per_set)),
+        "generator_input_energy_kwh": generator_input_energy_kwh,
+        "fuel_gallons_equivalent": generator_input_energy_kwh / fuel_energy,
+    }
+
+
+def _isr_loop_coverage(endurance_hr: float, loop_time_hr: float, loop_distance_km: float) -> dict[str, float]:
+    """Return full-loop, partial-loop, and patrol-distance coverage for an ISR endurance window."""
+    if loop_time_hr <= 0 or loop_distance_km <= 0 or endurance_hr <= 0:
+        return {
+            "completed_loops_full": 0.0,
+            "partial_loop_fraction": 0.0,
+            "partial_loop_distance_km": 0.0,
+            "total_patrol_distance_km": 0.0,
+        }
+    completed_loops_full = math.floor(endurance_hr / loop_time_hr)
+    remaining_time_hr = max(endurance_hr - (completed_loops_full * loop_time_hr), 0.0)
+    partial_loop_fraction = min(max(remaining_time_hr / loop_time_hr, 0.0), 1.0 - 1e-12)
+    partial_loop_distance_km = partial_loop_fraction * loop_distance_km
+    total_patrol_distance_km = (completed_loops_full * loop_distance_km) + partial_loop_distance_km
+    return {
+        "completed_loops_full": float(completed_loops_full),
+        "partial_loop_fraction": partial_loop_fraction,
+        "partial_loop_distance_km": partial_loop_distance_km,
+        "total_patrol_distance_km": total_patrol_distance_km,
+    }
+
+
 def compute_isr_persistence(
     loop_distance_km: float,
     usable_energy_kwh: float,
@@ -115,6 +179,7 @@ def compute_isr_persistence(
     environmental_multiplier: float,
 ) -> ISRPersistenceResult:
     """Compute maximum ISR time on station from route/perimeter length and usable energy."""
+    # TODO(v3.2): Model contested-delay stochastic hover/loiter interruptions after speed-power validation stabilizes.
     endurance_speed_kmh = max(endurance_speed_kts * 1.852, 0.001)
     available_mission_energy_kwh = max(usable_energy_kwh * (1.0 - reserve_fraction), 0.0)
     adjusted_power_draw_kw = max(endurance_power_kw * environmental_multiplier, 0.001)
@@ -221,17 +286,19 @@ def run_energy_simulation(
             transit_time = additional_transit_km / max(speed_kts * 1.852, 0.1)
             duration_single = outbound_time + return_time + transit_time
             current_penalty = payload_current_penalty(cur, current_dir, route_heading, speed_kts)
-            energy_single = vehicle.average_power_kw * duration_single * environmental_uplift_factor(temp, current_penalty)
+            requested_power_kw = estimate_power_at_speed_kw(vehicle, speed_kts)
+            energy_single = requested_power_kw * duration_single * environmental_uplift_factor(temp, current_penalty)
         elif mission_type in ISR_MISSIONS:
             endurance_speed_kts = max(float(speed_kts or vehicle.nominal_speed_kts), 0.1)
             current_penalty = isr_current_power_penalty(cur, endurance_speed_kts)
             environmental_multiplier = environmental_uplift_factor(temp, current_penalty)
+            endurance_power_kw = estimate_power_at_speed_kw(vehicle, endurance_speed_kts)
             persistence = compute_isr_persistence(
                 loop_distance_km=isr_loop_distance_km,
                 usable_energy_kwh=usable_battery_per_set,
                 reserve_fraction=0.0,
                 endurance_speed_kts=endurance_speed_kts,
-                endurance_power_kw=vehicle.average_power_kw,
+                endurance_power_kw=endurance_power_kw,
                 environmental_multiplier=environmental_multiplier,
             )
             isr_persistence_results.append(persistence)
@@ -244,7 +311,8 @@ def run_energy_simulation(
                 base_duration = distance / max(speed_kts * 1.852, 0.1)
                 duration_candidate = base_duration * search_current_duration_multiplier(cur, current_dir, option.track_heading_deg, speed_kts)
                 duration_candidate += option.turns * 0.01
-                energy_candidate = vehicle.average_power_kw * duration_candidate * (1 + temp_penalty)
+                requested_power_kw = estimate_power_at_speed_kw(vehicle, speed_kts)
+                energy_candidate = requested_power_kw * duration_candidate * (1 + temp_penalty)
                 option_results.append((energy_candidate, duration_candidate, option))
 
             best_energy, best_duration, best_option = min(option_results, key=lambda item: item[0])
@@ -289,18 +357,50 @@ def run_energy_simulation(
         adjusted_powers = np.array([result.adjusted_power_draw_kw for result in isr_persistence_results])
         env_multipliers = np.array([result.environmental_multiplier for result in isr_persistence_results])
         completed_loops = np.array([result.completed_loops for result in isr_persistence_results])
+        total_inventory_station_times = total_available_kwh / np.maximum(adjusted_powers, 0.001)
+        total_inventory_completed_loops = np.array(
+            [
+                int(total_time // loop_time) if loop_time > 0 else 0
+                for total_time, loop_time in zip(total_inventory_station_times, loop_times)
+            ]
+        )
+        loop_energies = adjusted_powers * loop_times
         partial_loops = np.array([result.remaining_partial_loop_pct for result in isr_persistence_results])
+        single_set_endurance_hr = float(np.percentile(station_times, 50))
+        total_inventory_endurance_hr = float(np.percentile(total_inventory_station_times, 50))
+        completed_loops_single_set = int(np.percentile(completed_loops, 50))
+        completed_loops_total_inventory = int(np.percentile(total_inventory_completed_loops, 50))
+        adjusted_power_kw = float(np.percentile(adjusted_powers, 50))
+        loop_time_hr = float(np.percentile(loop_times, 50))
+        single_set_coverage = _isr_loop_coverage(single_set_endurance_hr, loop_time_hr, isr_loop_distance_km)
+        total_inventory_coverage = _isr_loop_coverage(total_inventory_endurance_hr, loop_time_hr, isr_loop_distance_km)
         isr_summary = {
             "isr_loop_distance_km": isr_loop_distance_km,
-            "isr_loop_time_hr": float(np.percentile(loop_times, 50)),
-            "isr_max_time_on_station_hr": float(np.percentile(station_times, 50)),
+            "isr_loop_time_hr": loop_time_hr,
+            "isr_max_time_on_station_hr": single_set_endurance_hr,
             "isr_p10_time_on_station_hr": float(np.percentile(station_times, 10)),
             "isr_p90_time_on_station_hr": float(np.percentile(station_times, 90)),
-            "isr_completed_loops": int(np.percentile(completed_loops, 50)),
+            "isr_completed_loops": completed_loops_single_set,
             "isr_remaining_partial_loop_pct": float(np.percentile(partial_loops, 50)),
             "isr_available_mission_energy_kwh": usable_battery_per_set,
-            "isr_power_draw_kw": vehicle.average_power_kw,
-            "isr_adjusted_power_draw_kw": float(np.percentile(adjusted_powers, 50)),
+            "isr_power_draw_kw": estimate_power_at_speed_kw(vehicle, max(float(speed_kts or vehicle.nominal_speed_kts), 0.1)),
+            "isr_adjusted_power_draw_kw": adjusted_power_kw,
+            "isr_single_set_endurance_hr": single_set_endurance_hr,
+            "isr_total_inventory_endurance_hr": total_inventory_endurance_hr,
+            "isr_completed_loops_single_set": completed_loops_single_set,
+            "isr_completed_loops_total_inventory": completed_loops_total_inventory,
+            "isr_completed_loops_full_single_set": int(single_set_coverage["completed_loops_full"]),
+            "isr_completed_loops_full_total_inventory": int(total_inventory_coverage["completed_loops_full"]),
+            "isr_partial_loop_fraction_single_set": single_set_coverage["partial_loop_fraction"],
+            "isr_partial_loop_fraction_total_inventory": total_inventory_coverage["partial_loop_fraction"],
+            "isr_partial_loop_distance_km_single_set": single_set_coverage["partial_loop_distance_km"],
+            "isr_partial_loop_distance_km_total_inventory": total_inventory_coverage["partial_loop_distance_km"],
+            "isr_total_patrol_distance_km_single_set": single_set_coverage["total_patrol_distance_km"],
+            "isr_total_patrol_distance_km_total_inventory": total_inventory_coverage["total_patrol_distance_km"],
+            "isr_swap_window_hr": single_set_endurance_hr,
+            "isr_adjusted_power_kw": adjusted_power_kw,
+            "isr_loop_energy_kwh": float(np.percentile(loop_energies, 50)),
+            "isr_total_inventory_usable_energy_kwh": total_available_kwh,
             "isr_environmental_multiplier": float(np.percentile(env_multipliers, 50)),
             "isr_patrol_geometry": area.geometry_type,
         }
@@ -335,6 +435,17 @@ def run_energy_simulation(
         ) * 100.0
         mean_environmental_multiplier = (1.0 + mean_current_uplift_pct / 100.0) * (1.0 + mean_temp_uplift_pct / 100.0)
 
+    if mission_type in ISR_MISSIONS:
+        planning_energy_basis = "patrol_loop"
+        planning_energy_kwh = float(isr_summary.get("isr_loop_energy_kwh", p95))
+        planning_duration_basis = "patrol_loop_time"
+        planning_duration_hr = float(isr_summary.get("isr_loop_time_hr", mean_duration))
+    else:
+        planning_energy_basis = "mission_total"
+        planning_energy_kwh = p95
+        planning_duration_basis = "mission_duration"
+        planning_duration_hr = mean_duration
+
     summary = {
         "platform": vehicle.name,
         "mission_type": mission_type,
@@ -342,6 +453,11 @@ def run_energy_simulation(
         "p50_energy_kwh": p50,
         "p80_energy_kwh": p80,
         "p95_energy_kwh": p95,
+        "planning_energy_basis": planning_energy_basis,
+        "planning_percentile": "P95",
+        "planning_energy_kwh": planning_energy_kwh,
+        "planning_duration_basis": planning_duration_basis,
+        "planning_duration_hr": planning_duration_hr,
         "mean_duration_hr": mean_duration,
         "elapsed_with_recharge_hr": mean_duration + recharge_downtime_hr,
         "inventory_sufficiency_probability_pct": inventory_probability,
@@ -376,6 +492,10 @@ def run_energy_simulation(
         **search_summary,
         **isr_summary,
     }
+    if mission_type in ISR_MISSIONS:
+        summary["endurance_window_hr"] = summary.get("isr_total_inventory_endurance_hr")
+        summary["total_inventory_endurance_hr"] = summary.get("isr_total_inventory_endurance_hr")
+        summary["single_set_endurance_hr"] = summary.get("isr_single_set_endurance_hr")
 
     rows = [
         ("Platform", vehicle.name, ""),
@@ -404,10 +524,18 @@ def run_energy_simulation(
                 ("ISR patrol geometry", area.geometry_type, ""),
                 ("ISR patrol loop distance", isr_summary.get("isr_loop_distance_km", 0.0), "km"),
                 ("ISR loop time", isr_summary.get("isr_loop_time_hr", 0.0), "hr"),
-                ("Estimated ISR time on station", isr_summary.get("isr_max_time_on_station_hr", 0.0), "hr"),
-                ("Completed ISR patrol loops", isr_summary.get("isr_completed_loops", 0), "loops"),
+                ("Estimated ISR time on station", isr_summary.get("isr_single_set_endurance_hr", 0.0), "hr"),
+                ("ISR endurance per installed set", isr_summary.get("isr_single_set_endurance_hr", 0.0), "hr"),
+                ("ISR endurance using total inventory", isr_summary.get("isr_total_inventory_endurance_hr", 0.0), "hr"),
+                ("Completed ISR patrol loops per installed set", isr_summary.get("isr_completed_loops_single_set", 0), "loops"),
+                ("Completed ISR patrol loops using total inventory", isr_summary.get("isr_completed_loops_total_inventory", 0), "loops"),
+                ("Partial next-loop distance per installed set", isr_summary.get("isr_partial_loop_distance_km_single_set", 0.0), "km"),
+                ("Partial next-loop distance using total inventory", isr_summary.get("isr_partial_loop_distance_km_total_inventory", 0.0), "km"),
+                ("Total patrol distance per installed set", isr_summary.get("isr_total_patrol_distance_km_single_set", 0.0), "km"),
+                ("Total patrol distance using total inventory", isr_summary.get("isr_total_patrol_distance_km_total_inventory", 0.0), "km"),
                 ("Remaining partial loop", isr_summary.get("isr_remaining_partial_loop_pct", 0.0), "%"),
                 ("Adjusted endurance power draw", isr_summary.get("isr_adjusted_power_draw_kw", 0.0), "kW"),
+                ("ISR loop energy", isr_summary.get("isr_loop_energy_kwh", 0.0), "kWh"),
                 ("Reserve / battery-health margin per set", summary["reserve_margin_per_set_kwh"], "kWh"),
             ]
         )

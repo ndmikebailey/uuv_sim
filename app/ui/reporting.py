@@ -16,19 +16,112 @@ from models.environment_model import EnvironmentData
 from models.mission_model import MissionArea
 from services.metoc_fusion import MetocFusionService
 from utils.constants import EARTH_RADIUS_KM, ISR_MISSIONS, PAYLOAD_MISSIONS, SEARCH_MISSIONS
-from utils.parsing import fmt
+
+
+def fmt1(value: object, suffix: str = "") -> str:
+    """Format visible report values to one decimal place."""
+    if value is None or value == "":
+        return ""
+    try:
+        return f"{float(value):.1f}{suffix}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def fmt_int(value: object) -> str:
+    """Format visible report counts as integers."""
+    if value is None or value == "":
+        return ""
+    try:
+        return str(int(float(value)))
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def fmt_coord(value: object) -> str:
+    """Format visible report coordinates."""
+    if value is None or value == "":
+        return ""
+    try:
+        return f"{float(value):.5f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _format_display_cell(value: object, unit: str) -> object:
+    """Format table cells for display without changing calculation precision."""
+    if value is None or value == "":
+        return ""
+    unit_lower = unit.lower()
+    if unit_lower in {"sets", "loops", "sequences", "runs", "lanes"}:
+        return fmt_int(value)
+    if unit_lower in {"kwh", "km", "hr", "kts", "deg c", "%", "kw", "m"}:
+        return fmt1(value)
+    if isinstance(value, float):
+        return fmt1(value)
+    return value
 
 
 def rows_to_dataframe(rows: list[tuple[str, object, str]], columns: tuple[str, str, str]) -> pd.DataFrame:
     """Convert row tuples into a display dataframe."""
-    return pd.DataFrame(rows, columns=list(columns))
+    if len(columns) == 2:
+        display_rows = [(row[0], row[1]) for row in rows]
+    else:
+        display_rows = [
+            (item, _format_display_cell(value, unit), unit)
+            for item, value, unit in rows
+        ]
+    return pd.DataFrame(display_rows, columns=list(columns))
+
+
+def _display_value_with_unit(value: object, unit: str) -> str:
+    """Return a compact visible value with unit text."""
+    display_value = _format_display_cell(value, unit)
+    if display_value == "":
+        return ""
+    return f"{display_value} {unit}".strip()
+
+
+def build_report_table_html(rows: list[tuple[object, ...]], title: str | None = None) -> str:
+    """Render fixed-width report rows as HTML for PDF-friendly display."""
+    body: list[str] = []
+    for row in rows:
+        if len(row) >= 3:
+            metric, value, unit = row[0], row[1], str(row[2])
+            value_text = _display_value_with_unit(value, unit)
+        elif len(row) >= 2:
+            metric, value_text = row[0], row[1]
+        else:
+            continue
+        if value_text in (None, ""):
+            continue
+        body.append(
+            "<tr>"
+            f"<td>{escape(str(metric))}</td>"
+            f"<td>{escape(str(value_text))}</td>"
+            "</tr>"
+        )
+    if not body:
+        return ""
+    heading = f"<h3>{escape(title)}</h3>" if title else ""
+    return f"""
+    <div class='uuv-card full-width-card'>
+      {heading}
+      <table class='report-table'>
+        <thead>
+          <tr><th class='metric-col'>Metric</th><th class='value-col'>Value</th></tr>
+        </thead>
+        <tbody>{''.join(body)}</tbody>
+      </table>
+    </div>
+    """
 
 
 def env_table_to_html(rows: list[tuple[str, object, str]], title: str = "Mission Geometry and Environmental Data") -> str:
     """Render mission/environment rows as a Gradio HTML card."""
     body = []
     for item, value, unit in rows:
-        value_text = f"{value:.3f}".rstrip("0").rstrip(".") if isinstance(value, float) else ("" if value is None else str(value))
+        value_text = str(_format_display_cell(value, unit))
         body.append(f"<tr><td>{item}</td><td class='value'>{value_text}</td><td>{unit}</td></tr>")
     return f"""
     <div class='uuv-card full-width-card'>
@@ -64,8 +157,9 @@ def _as_int(value: object) -> int | None:
 
 def _fmt_value(value: float, digits: int = 2) -> str:
     """Format a report value without synthetic placeholders."""
-    text = f"{value:.{digits}f}"
-    return text.rstrip("0").rstrip(".") if "." in text else text
+    if digits == 0:
+        return fmt_int(value)
+    return fmt1(value)
 
 
 def _summary_bullet(label: str, text: str | None) -> str:
@@ -108,10 +202,10 @@ def _payload_planning_note(summary: dict[str, object], area: MissionArea, enviro
         if speed is not None:
             penalty_pct = payload_current_penalty(current_speed, current_dir, route_heading, speed) * 100.0
             parts.append(
-                f"current impact is {along:+.2f} kts along-track and {cross:+.2f} kts cross-track, about {_fmt_value(penalty_pct, 1)}% transit uplift"
+                f"current impact is {fmt1(along, ' kts')} along-track and {fmt1(cross, ' kts')} cross-track, about {fmt1(penalty_pct, '%')} transit uplift"
             )
         else:
-            parts.append(f"current impact is {along:+.2f} kts along-track and {cross:+.2f} kts cross-track")
+            parts.append(f"current impact is {fmt1(along, ' kts')} along-track and {fmt1(cross, ' kts')} cross-track")
     burden = _as_float(summary.get("environmental_multiplier"))
     if burden is not None:
         parts.append(f"expected environmental energy burden is about {_fmt_value((burden - 1.0) * 100.0, 1)}%")
@@ -122,16 +216,36 @@ def _isr_planning_note(summary: dict[str, object]) -> str:
     """Build the mission-specific ISR planning note."""
     parts: list[str] = []
     loop_distance = _as_float(summary.get("isr_loop_distance_km"))
-    station_time = _as_float(summary.get("isr_max_time_on_station_hr"))
-    completed_loops = _as_int(summary.get("isr_completed_loops"))
+    loop_time = _as_float(summary.get("isr_loop_time_hr"))
+    single_set_endurance = _as_float(summary.get("isr_single_set_endurance_hr") or summary.get("isr_max_time_on_station_hr"))
+    total_inventory_endurance = _as_float(summary.get("isr_total_inventory_endurance_hr"))
+    completed_loops_single = _as_int(summary.get("isr_completed_loops_single_set") or summary.get("isr_completed_loops"))
+    completed_loops_total = _as_int(summary.get("isr_completed_loops_total_inventory"))
+    loop_energy = _as_float(summary.get("isr_loop_energy_kwh"))
+    partial_single_km = _as_float(summary.get("isr_partial_loop_distance_km_single_set"))
+    partial_total_km = _as_float(summary.get("isr_partial_loop_distance_km_total_inventory"))
+    total_distance_single_km = _as_float(summary.get("isr_total_patrol_distance_km_single_set"))
+    total_distance_inventory_km = _as_float(summary.get("isr_total_patrol_distance_km_total_inventory"))
     if loop_distance is not None:
-        parts.append(f"patrol loop distance is {_fmt_value(loop_distance)} km")
-    if station_time is not None:
-        parts.append(f"time on station is {_fmt_value(station_time, 1)} hr")
-    if completed_loops is not None:
-        parts.append(f"completed loops are {completed_loops}")
-    if station_time is not None:
-        parts.append("plan recovery or a battery swap at the calculated endurance window before retasking")
+        parts.append(f"patrol loop distance is {fmt1(loop_distance)} km")
+    if loop_time is not None:
+        parts.append(f"patrol loop time is {fmt1(loop_time)} hr")
+    if loop_energy is not None:
+        parts.append(f"patrol loop energy is {fmt1(loop_energy)} kWh")
+    if single_set_endurance is not None:
+        partial_text = f", plus {fmt1(partial_single_km)} km of the next loop" if partial_single_km and partial_single_km > 0.05 else ""
+        completed_text = f" after {fmt_int(completed_loops_single)} full loop(s)" if completed_loops_single is not None else ""
+        parts.append(f"one installed set supports about {fmt1(single_set_endurance)} hr{completed_text}{partial_text}")
+    if total_inventory_endurance is not None:
+        partial_text = f", plus {fmt1(partial_total_km)} km of the next loop" if partial_total_km and partial_total_km > 0.05 else ""
+        completed_text = f" after {fmt_int(completed_loops_total)} full loop(s)" if completed_loops_total is not None else ""
+        parts.append(f"total available inventory supports about {fmt1(total_inventory_endurance)} hr{completed_text}{partial_text}")
+    if total_distance_single_km is not None:
+        parts.append(f"total patrol distance before recovery/swap is {fmt1(total_distance_single_km)} km per installed set")
+    if total_distance_inventory_km is not None:
+        parts.append(f"total patrol distance using available inventory is {fmt1(total_distance_inventory_km)} km")
+    if single_set_endurance is not None:
+        parts.append(f"plan recovery or battery swap at about {fmt1(single_set_endurance)} hr per installed set before retasking")
     return "ISR persistence planning: " + "; ".join(parts) + "." if parts else ""
 
 
@@ -183,7 +297,70 @@ def build_energy_planner_summary_html(summary: dict[str, object], area: MissionA
     This should be a BLUF-style planning summary, not a raw data dump.
     """
     del vehicle
-    p95 = _as_float(summary.get("p95_energy_kwh"))
+    mission_type = str(summary.get("mission_type") or "")
+    if mission_type in ISR_MISSIONS:
+        total_inventory_endurance = _as_float(summary.get("isr_total_inventory_endurance_hr"))
+        single_set_endurance = _as_float(summary.get("isr_single_set_endurance_hr") or summary.get("isr_max_time_on_station_hr"))
+        loop_energy = _as_float(summary.get("planning_energy_kwh") or summary.get("isr_loop_energy_kwh"))
+        completed_single = _as_int(summary.get("isr_completed_loops_single_set") or summary.get("isr_completed_loops"))
+        completed_total = _as_int(summary.get("isr_completed_loops_total_inventory"))
+        swap_window = _as_float(summary.get("isr_swap_window_hr") or single_set_endurance)
+        partial_single_km = _as_float(summary.get("isr_partial_loop_distance_km_single_set"))
+        partial_total_km = _as_float(summary.get("isr_partial_loop_distance_km_total_inventory"))
+        total_distance_single_km = _as_float(summary.get("isr_total_patrol_distance_km_single_set"))
+        total_distance_inventory_km = _as_float(summary.get("isr_total_patrol_distance_km_total_inventory"))
+
+        bluf = (
+            f"ISR patrol endurance is estimated at {fmt1(total_inventory_endurance)} hr using the available battery inventory."
+            if total_inventory_endurance is not None
+            else None
+        )
+        energy_demand = (
+            f"Conservative planning energy is {fmt1(loop_energy)} kWh per patrol loop."
+            if loop_energy is not None
+            else None
+        )
+        sustainment_parts: list[str] = []
+        if single_set_endurance is not None:
+            partial_text = f", plus {fmt1(partial_single_km)} km of the next loop" if partial_single_km and partial_single_km > 0.05 else ""
+            sustainment_parts.append(
+                f"One installed set supports approximately {fmt1(single_set_endurance)} hr before recovery/swap{partial_text}."
+            )
+        if total_inventory_endurance is not None:
+            partial_text = f", plus {fmt1(partial_total_km)} km of the next loop" if partial_total_km and partial_total_km > 0.05 else ""
+            sustainment_parts.append(
+                f"Total available inventory supports approximately {fmt1(total_inventory_endurance)} hr before battery exhaustion{partial_text}."
+            )
+        if total_distance_single_km is not None:
+            sustainment_parts.append(f"Total patrol distance before recovery/swap: {fmt1(total_distance_single_km)} km per installed set.")
+        if total_distance_inventory_km is not None:
+            sustainment_parts.append(f"Total patrol distance before battery exhaustion using available inventory: {fmt1(total_distance_inventory_km)} km.")
+        recharge_swap = (
+            f"Plan recovery or battery swap at approximately {fmt1(swap_window)} hr per installed set before retasking."
+            if swap_window is not None
+            else None
+        )
+        planning_note = (
+            "ISR persistence planning is based on patrol loop distance, endurance-mode speed, "
+            "environmental burden, and available battery inventory."
+        )
+        sections = [
+            _summary_bullet("BLUF", bluf),
+            _summary_bullet("Energy demand", energy_demand),
+            _summary_bullet("Battery sustainment", " ".join(sustainment_parts) if sustainment_parts else None),
+            _summary_bullet("Recharge / swap", recharge_swap),
+            _summary_bullet("Environmental burden", _environmental_burden_text(summary)),
+            _summary_bullet("Planning note", planning_note),
+        ]
+        return f"""
+        <div class='uuv-card planner-summary'>
+          <h3>Energy Planner Summary</h3>
+          <ul>{''.join(sections)}</ul>
+        </div>
+        """
+
+    p95 = _as_float(summary.get("planning_energy_kwh") or summary.get("p95_energy_kwh"))
+    planning_basis = str(summary.get("planning_energy_basis") or "mission_total")
     usable_per_set = _as_float(summary.get("usable_battery_per_set_kwh"))
     sets_required = _as_int(summary.get("battery_sets_required_p80"))
     sets_available = _as_int(summary.get("battery_sets_available"))
@@ -211,7 +388,21 @@ def build_energy_planner_summary_html(summary: dict[str, object], area: MissionA
     elif inventory_sufficient is False:
         bluf = "Mission is not covered by current battery inventory at the planning level unless additional charged batteries are staged."
     if p95 is not None:
-        bluf = f"{bluf} Conservative planning energy is {_fmt_value(p95)} kWh (P95)." if bluf else f"Conservative planning energy is {_fmt_value(p95)} kWh (P95)."
+        basis_text = "for the mission total" if planning_basis == "mission_total" else f"for {planning_basis.replace('_', ' ')}"
+        energy_text = f"Conservative planning energy is {_fmt_value(p95)} kWh {basis_text}."
+        bluf = f"{bluf} {energy_text}" if bluf else energy_text
+    mission_type = str(summary.get("mission_type") or "")
+    if mission_type in PAYLOAD_MISSIONS and p95 is not None:
+        total_available = _as_float(summary.get("total_available_kwh"))
+        if total_available is not None:
+            conservative_margin = total_available - p95
+            if conservative_margin >= 0:
+                margin_text = f" Conservative energy margin is approximately {fmt1(conservative_margin)} kWh."
+                if conservative_margin <= max(0.25, total_available * 0.10):
+                    margin_text += " Margin is limited; consider additional battery inventory or recharge support before repeated tasking."
+            else:
+                margin_text = f" Conservative shortfall is approximately {fmt1(abs(conservative_margin))} kWh."
+            bluf = f"{bluf}{margin_text}" if bluf else margin_text.strip()
 
     recharge_swap: str | None = None
     active_sets_required = conservative_sets_required or sets_required
@@ -249,24 +440,26 @@ def results_html(summary: dict[str, object]) -> str:
     if summary.get("mission_type") in ISR_MISSIONS:
         detail_rows.extend(
             [
-                ("ISR patrol loop distance", f"{float(summary.get('isr_loop_distance_km', 0)):.2f} km"),
-                ("Estimated ISR time on station", f"{float(summary.get('isr_max_time_on_station_hr', 0)):.1f} hr"),
-                ("ISR loop time", f"{float(summary.get('isr_loop_time_hr', 0)):.2f} hr"),
-                ("Completed patrol loops", summary.get("isr_completed_loops")),
+                ("ISR patrol loop distance", f"{fmt1(summary.get('isr_loop_distance_km'))} km"),
+                ("ISR loop time", f"{fmt1(summary.get('isr_loop_time_hr'))} hr"),
+                ("Endurance per installed set", f"{fmt1(summary.get('isr_single_set_endurance_hr') or summary.get('isr_max_time_on_station_hr'))} hr"),
+                ("Endurance using total inventory", f"{fmt1(summary.get('isr_total_inventory_endurance_hr'))} hr"),
+                ("Completed loops per installed set", fmt_int(summary.get("isr_completed_loops_single_set") or summary.get("isr_completed_loops"))),
+                ("Completed loops using total inventory", fmt_int(summary.get("isr_completed_loops_total_inventory"))),
             ]
         )
     if summary.get("mission_type") in PAYLOAD_MISSIONS and summary.get("route_distance_km") is not None:
-        detail_rows.append(("Payload route distance", f"{float(summary.get('route_distance_km', 0)):.2f} km"))
-        detail_rows.append(("Payload route heading", f"{float(summary.get('route_heading_deg', 0)):.1f} deg"))
+        detail_rows.append(("Payload route distance", f"{fmt1(summary.get('route_distance_km'))} km"))
+        detail_rows.append(("Payload route heading", f"{fmt1(summary.get('route_heading_deg'))} deg"))
     details = "".join(f"<div><strong>{key}:</strong> {value}</div>" for key, value in detail_rows)
     return f"""
     <div class='uuv-card'>
       <h2>Run Summary</h2>
       <p><strong>{summary.get("mission_type")}</strong> on <strong>{summary.get("platform")}</strong></p>
       <p>
-        Planning-level mission energy: <strong>{float(summary.get('p80_energy_kwh', 0)):.2f} kWh (P80)</strong> |
-        Duration: <strong>{float(summary.get('mean_duration_hr', 0)):.1f} hr</strong> |
-        Battery sets required at planning level: <strong>{summary.get("battery_sets_required_p80")} (P80)</strong> |
+        Planning-level mission energy: <strong>{fmt1(summary.get('p80_energy_kwh'))} kWh (P80)</strong> |
+        Duration: <strong>{fmt1(summary.get('mean_duration_hr'))} hr</strong> |
+        Battery sets required at planning level: <strong>{fmt_int(summary.get("battery_sets_required_p80"))} (P80)</strong> |
         Inventory sufficient: <strong>{yesno(summary.get("battery_inventory_sufficient_no_recharge"))}</strong>
       </p>
       <div>{details}</div>
@@ -321,7 +514,7 @@ def _metoc_lookup_point(environment: EnvironmentData, area: MissionArea, label: 
             lat = area.centroid_lat
             lon = area.centroid_lon
     try:
-        return f"{label}, {float(lat):.6f}, {float(lon):.6f}"
+        return f"{label}, {fmt_coord(lat)}, {fmt_coord(lon)}"
     except (TypeError, ValueError):
         return f"{label}, unavailable"
 
@@ -402,8 +595,15 @@ def build_mission_geometry_summary_rows(
             ("Patrol geometry", geometry_label, ""),
             ("Loop distance", _float_or_blank(summary.get("isr_loop_distance_km")), "km"),
             ("Loop time", _float_or_blank(summary.get("isr_loop_time_hr")), "hr"),
-            ("Time on station", _float_or_blank(summary.get("isr_max_time_on_station_hr")), "hr"),
-            ("Completed loops", summary.get("isr_completed_loops"), "loops"),
+            ("Endurance per installed set", _float_or_blank(summary.get("isr_single_set_endurance_hr") or summary.get("isr_max_time_on_station_hr")), "hr"),
+            ("Endurance using total inventory", _float_or_blank(summary.get("isr_total_inventory_endurance_hr")), "hr"),
+            ("Completed loops per installed set", summary.get("isr_completed_loops_single_set") or summary.get("isr_completed_loops"), "loops"),
+            ("Completed loops using total inventory", summary.get("isr_completed_loops_total_inventory"), "loops"),
+            ("Partial next-loop distance per installed set", _float_or_blank(summary.get("isr_partial_loop_distance_km_single_set")), "km"),
+            ("Partial next-loop distance using total inventory", _float_or_blank(summary.get("isr_partial_loop_distance_km_total_inventory")), "km"),
+            ("Total patrol distance per installed set", _float_or_blank(summary.get("isr_total_patrol_distance_km_single_set")), "km"),
+            ("Total patrol distance using total inventory", _float_or_blank(summary.get("isr_total_patrol_distance_km_total_inventory")), "km"),
+            ("Battery swap/recovery window", _float_or_blank(summary.get("isr_swap_window_hr")), "hr"),
             ("METOC lookup point", _metoc_lookup_point(environment, area, lookup_label), ""),
         ]
         if area.area_km2 is not None:
@@ -463,11 +663,11 @@ def build_energy_equivalence_rows(planning_energy_kwh: float, planning_basis: st
 
     return [
         ["Planning basis", planning_basis],
-        ["Conservative planning energy", f"{planning_energy_kwh:.3f} kWh"],
+        ["Conservative planning energy", f"{fmt1(planning_energy_kwh)} kWh"],
         ["Watt-hours", f"{wh:,.0f} Wh"],
         ["Joules", f"{joules:,.0f} J"],
-        ["Megajoules", f"{mj:,.3f} MJ"],
-        ["Gigajoules", f"{gj:,.6f} GJ"],
+        ["Megajoules", f"{mj:,.1f} MJ"],
+        ["Gigajoules", f"{gj:,.3f} GJ"],
         ["Kilocalories", f"{kcal:,.0f} kcal"],
         ["Tonnes of oil equivalent", f"{toe:.6f} TOE"],
         ["Barrel-of-oil equivalent", f"{boe:.6f} BOE"],
@@ -480,7 +680,7 @@ def metoc_html(environment: EnvironmentData, fusion_service: MetocFusionService)
     assessment = fusion_service.assessment(environment)
     cards = []
     for name, level, color, value, unit, note in assessment["items"]:  # type: ignore[index]
-        display = f"{fmt(value)} {unit}".strip() if isinstance(value, (int, float)) else str(value)
+        display = f"{fmt1(value)} {unit}".strip() if isinstance(value, (int, float)) else str(value)
         cards.append(f"""
         <div class='metoc-card {color}'>
           <div class='metoc-title'>{name}</div>
@@ -526,7 +726,7 @@ def _fmt_lookup_point(label: str, lat: float | None, lon: float | None) -> str:
     """Format a METOC lookup point line."""
     if lat is None or lon is None:
         return f"**METOC lookup point:** {label}, N/A"
-    return f"**METOC lookup point:** {label}, {lat:.6f}, {lon:.6f}"
+    return f"**METOC lookup point:** {label}, {fmt_coord(lat)}, {fmt_coord(lon)}"
 
 
 def _mission_area_from_context(area_data: dict[str, Any]) -> MissionArea | None:
@@ -550,9 +750,9 @@ def context_markdown(context: dict[str, Any]) -> str:
         geom = (
             f"**Mission loaded:** {mission_type}  \n"
             f"**Geometry:** {shape_label} search area  \n"
-            f"**Area:** {fmt(area_data.get('area_km2'))} sq km  \n"
-            f"**Dimensions:** {fmt(area_data.get('width_km'))} km x {fmt(area_data.get('height_km'))} km  \n"
-            f"**METOC lookup point:** area centroid, {fmt(area_data.get('centroid_lat'), 6)}, {fmt(area_data.get('centroid_lon'), 6)}"
+            f"**Area:** {fmt1(area_data.get('area_km2'))} sq km  \n"
+            f"**Dimensions:** {fmt1(area_data.get('width_km'))} km x {fmt1(area_data.get('height_km'))} km  \n"
+            f"**METOC lookup point:** area centroid, {fmt_coord(area_data.get('centroid_lat'))}, {fmt_coord(area_data.get('centroid_lon'))}"
         )
     elif mission_type in PAYLOAD_MISSIONS:
         route_points = _points_from_dicts(area_data.get("route_points") or area_data.get("vertices"))
@@ -567,8 +767,8 @@ def context_markdown(context: dict[str, Any]) -> str:
         geom = (
             f"**Mission loaded:** Payload Delivery  \n"
             f"**Geometry:** Route  \n"
-            f"**Route distance:** {fmt(area_data.get('route_distance_km'))} km  \n"
-            f"**Route heading:** {fmt(area_data.get('route_heading_deg'), 1)} deg  \n"
+            f"**Route distance:** {fmt1(area_data.get('route_distance_km'))} km  \n"
+            f"**Route heading:** {fmt1(area_data.get('route_heading_deg'))} deg  \n"
             f"{_fmt_lookup_point('route midpoint', lookup_lat, lookup_lon)}"
         )
     else:
@@ -581,8 +781,8 @@ def context_markdown(context: dict[str, Any]) -> str:
             geom = (
                 f"**Mission loaded:** ISR  \n"
                 f"**Geometry:** Line patrol  \n"
-                f"**One-way route distance:** {one_way_km:.2f} km  \n"
-                f"**Out-and-back patrol loop distance:** {loop_distance_km:.2f} km  \n"
+                f"**One-way route distance:** {fmt1(one_way_km)} km  \n"
+                f"**Out-and-back patrol loop distance:** {fmt1(loop_distance_km)} km  \n"
                 f"{_fmt_lookup_point('first route point', lookup_lat, lookup_lon)}"
             )
         else:
@@ -592,15 +792,15 @@ def context_markdown(context: dict[str, Any]) -> str:
             geom = (
                 f"**Mission loaded:** ISR  \n"
                 f"**Geometry:** {geometry_label} perimeter patrol  \n"
-                f"**Patrol loop distance:** {loop_distance_km:.2f} km  \n"
+                f"**Patrol loop distance:** {fmt1(loop_distance_km)} km  \n"
                 f"{_fmt_lookup_point('first patrol point', lookup_lat, lookup_lon)}  \n"
-                f"**Area enclosed:** {fmt(area_data.get('area_km2'))} sq km, reference only"
+                f"**Area enclosed:** {fmt1(area_data.get('area_km2'))} sq km, reference only"
             )
     env = (
-        f"\n\n**Open-Meteo baseline:** current {fmt(environment.get('current_speed_kts_mean'))} kts "
-        f"from {fmt(environment.get('current_direction_deg_mean'), 1)} deg, "
-        f"SST {fmt(environment.get('sea_surface_temp_c_mean'), 1)} deg C, "
-        f"wind {fmt(environment.get('wind_speed_kts_mean'))} kts.  \n"
+        f"\n\n**Open-Meteo baseline:** current {fmt1(environment.get('current_speed_kts_mean'))} kts "
+        f"from {fmt1(environment.get('current_direction_deg_mean'))} deg, "
+        f"SST {fmt1(environment.get('sea_surface_temp_c_mean'))} deg C, "
+        f"wind {fmt1(environment.get('wind_speed_kts_mean'))} kts.  \n"
         f"**Weather:** {environment.get('weather_summary') or 'N/A'}"
     )
     return geom + env
@@ -631,6 +831,7 @@ def build_energy_time_chart(
     battery_sets_available: int,
     recharge_hr: float,
     battery_sets_required: int | None = None,
+    mission_type: str = "",
 ) -> Any:
     """Render cumulative mission energy and battery lens."""
     del recharge_hr
@@ -645,15 +846,23 @@ def build_energy_time_chart(
     p50_series = p50_e * phase_curve
     p10_series = p10_e * phase_curve
     p90_series = p90_e * phase_curve
+    narrow_spread = (p90_e - p10_e) < max(0.01, p50_e * 0.01)
+    band_low = p10_series
+    band_high = p90_series
+    if narrow_spread:
+        display_half_width = max(p50_e * 0.015, 0.01) * phase_curve
+        band_low = np.maximum(p50_series - display_half_width, 0.0)
+        band_high = p50_series + display_half_width
 
     fig, ax1 = plt.subplots(figsize=(9, 4.6))
-    ax1.fill_between(t, p10_series, p90_series, alpha=0.15, color="#2563eb", label="_nolegend_")
+    ax1.fill_between(t, band_low, band_high, alpha=0.22, color="#2563eb", label="_nolegend_")
     cumulative_line, = ax1.plot(t, p50_series, linewidth=2.2, color="#1d4ed8", label="Expected cumulative energy (P50)")
     ax1.scatter([0.0], [0.0], zorder=5, color="#1d4ed8")
     ax1.scatter([p50_t], [p50_e], zorder=5, color="#1d4ed8")
     ax1.set_xlabel("Mission Time (hours)")
     ax1.set_ylabel("Cumulative Energy (kWh)")
-    ax1.set_title("Mission Energy Progress and Battery Lens")
+    title_prefix = "ISR " if mission_type in ISR_MISSIONS else ""
+    ax1.set_title(f"{title_prefix}Mission Energy Progress and Battery Lens")
     ax1.grid(True, alpha=0.3)
 
     ax2 = ax1.twinx()
@@ -694,19 +903,15 @@ def build_energy_time_chart(
                 color="#334155",
             )
     ax1.legend([cumulative_line, battery_line], ["Expected cumulative energy (P50)", "Battery energy remaining"], loc="upper left")
-    fig.text(
-        0.5,
-        0.025,
-        "Shaded band shows P10-P90 Monte Carlo cumulative-energy spread. Battery remaining is usable planning energy, not direct voltage/SOC.",
-        ha="center",
-        va="bottom",
-        fontsize=8.5,
-    )
+    note = "Shaded band shows P10-P90 Monte Carlo cumulative-energy spread. Battery remaining is usable planning energy, not direct voltage/SOC."
+    if narrow_spread:
+        note = "Monte Carlo spread is narrow for this run; shaded band is widened slightly for visibility. Battery remaining is usable planning energy, not direct voltage/SOC."
+    fig.text(0.5, 0.025, note, ha="center", va="bottom", fontsize=8.5)
     fig.tight_layout(rect=(0, 0.06, 1, 1))
     return fig
 
 
-def build_distribution_chart(energy_arr: np.ndarray, p80: float, usable_total_kwh: float) -> Any:
+def build_distribution_chart(energy_arr: np.ndarray, p80: float, usable_total_kwh: float, mission_type: str = "") -> Any:
     """Render Monte Carlo energy distribution."""
     fig, ax = plt.subplots(figsize=(9.5, 4.8), dpi=120)
     p05 = float(np.percentile(energy_arr, 5))
@@ -719,17 +924,18 @@ def build_distribution_chart(energy_arr: np.ndarray, p80: float, usable_total_kw
     xmax = max(p99, p80, p95) + spread * 0.75
     bins = min(24, max(10, int(np.sqrt(energy_arr.size) * 1.8)))
     ax.hist(energy_arr, bins=bins, alpha=0.82, edgecolor="black", linewidth=0.25)
-    ax.axvline(p50, linestyle="-", linewidth=2, label=f"Expected energy (P50): {p50:.3g} kWh")
-    ax.axvline(p80, linestyle="--", linewidth=2, label=f"Planning-level energy (P80): {p80:.3g} kWh")
-    ax.axvline(p95, linestyle=":", linewidth=2, label=f"Conservative energy (P95): {p95:.3g} kWh")
+    ax.axvline(p50, linestyle="-", linewidth=2, label=f"Expected energy (P50): {fmt1(p50)} kWh")
+    ax.axvline(p80, linestyle="--", linewidth=2, label=f"Planning-level energy (P80): {fmt1(p80)} kWh")
+    ax.axvline(p95, linestyle=":", linewidth=2, label=f"Conservative energy (P95): {fmt1(p95)} kWh")
     if xmin <= usable_total_kwh <= xmax:
-        ax.axvline(usable_total_kwh, linestyle="-.", linewidth=2, label=f"Battery inventory: {usable_total_kwh:.3g} kWh")
+        ax.axvline(usable_total_kwh, linestyle="-.", linewidth=2, label=f"Battery inventory: {fmt1(usable_total_kwh)} kWh")
     else:
-        ax.text(0.98, 0.95, f"Battery inventory without recharge: {usable_total_kwh:.2f} kWh", transform=ax.transAxes, ha="right", va="top", fontsize=9, bbox=dict(boxstyle="round,pad=0.35", facecolor="#eef2f7", edgecolor="#94a3b8", alpha=0.95))
+        ax.text(0.98, 0.95, f"Battery inventory without recharge: {fmt1(usable_total_kwh)} kWh", transform=ax.transAxes, ha="right", va="top", fontsize=9, bbox=dict(boxstyle="round,pad=0.35", facecolor="#eef2f7", edgecolor="#94a3b8", alpha=0.95))
     ax.set_xlim(xmin, xmax)
     ax.set_xlabel("Mission energy required, kWh")
     ax.set_ylabel("Monte Carlo count")
-    ax.set_title("Mission Energy Uncertainty Distribution")
+    title = "ISR Mission Energy Uncertainty Distribution" if mission_type in ISR_MISSIONS else "Mission Energy Uncertainty Distribution"
+    ax.set_title(title)
     ax.grid(True, alpha=0.25)
     ax.legend(loc="upper left", fontsize=9)
     if (p95 - p05) < max(0.01, p50 * 0.01):
@@ -846,7 +1052,7 @@ def _payload_current_impact_text(area: MissionArea, environment: EnvironmentData
     current_dir = float(environment.current_direction_deg_mean or 0.0)
     along, cross = current_components(current_speed, current_dir, route_heading)
     penalty_pct = payload_current_penalty(current_speed, current_dir, route_heading, speed_kts) * 100.0
-    return f"Along-track current {along:+.2f} kts | cross-track {cross:+.2f} kts | transit uplift {penalty_pct:.1f}%"
+    return f"Along-track current {fmt1(along)} kts | cross-track {fmt1(cross)} kts | transit uplift {fmt1(penalty_pct)}%"
 
 
 def _draw_area_lanes(ax: Any, area: MissionArea, track_spacing_m: float, orientation: str, arrow_density: int = 25) -> dict[str, object]:
@@ -909,7 +1115,7 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea, 
         fig.text(
             0.5,
             0.025,
-            f"Route distance: {distance:.2f} km",
+            f"Route distance: {fmt1(distance)} km",
             ha="center",
             va="bottom",
             fontsize=8,
@@ -942,9 +1148,9 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea, 
             0.5,
             0.025,
             (
-                f"Loop distance: {float(summary.get('isr_loop_distance_km', 0)):.2f} km | "
-                f"Time on station: {float(summary.get('isr_max_time_on_station_hr', 0)):.1f} hr | "
-                f"Completed loops: {summary.get('isr_completed_loops', 0)}"
+                f"Loop distance: {fmt1(summary.get('isr_loop_distance_km'))} km | "
+                f"Inventory endurance: {fmt1(summary.get('isr_total_inventory_endurance_hr'))} hr | "
+                f"Loops: {fmt_int(summary.get('isr_completed_loops_total_inventory'))}"
             ),
             ha="center",
             va="bottom",
@@ -972,12 +1178,12 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea, 
         ax.scatter([area.centroid_local_km.x], [area.centroid_local_km.y], s=34, marker="o", color="#111827", zorder=5)
     shape_label = "Polygon" if area.geometry_type == "polygon" else "Rectangle"
     ax.set_title(f"Search Area and Swath Pattern Snapshot: {shape_label}", pad=10, fontsize=13)
-    ax.text(0.01, -0.18, f"Swath/track spacing: {track_spacing_m:.0f} m | Recommended orientation: {orientation} | Planning snapshot only", transform=ax.transAxes, fontsize=8, va="top")
+    ax.text(0.01, -0.18, f"Swath/track spacing: {fmt_int(track_spacing_m)} m | Recommended orientation: {orientation} | Planning snapshot only", transform=ax.transAxes, fontsize=8, va="top")
     ax.text(0.99, -0.18, f"Lanes: {lanes.get('lane_count', 0)}", transform=ax.transAxes, ha="right", fontsize=8, va="top")
     ax.text(
         0.99,
         0.02,
-        f"Area: {(area.area_km2 or 0):.2f} sq km\nBounding box: {(area.width_km or 0):.2f} x {(area.height_km or 0):.2f} km",
+        f"Area: {fmt1(area.area_km2 or 0)} sq km\nBounding box: {fmt1(area.width_km or 0)} x {fmt1(area.height_km or 0)} km",
         transform=ax.transAxes,
         ha="right",
         va="bottom",

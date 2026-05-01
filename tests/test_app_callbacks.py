@@ -11,7 +11,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 import app.main as main
+from app.ui.reporting import build_energy_equivalence_rows
 from models.environment_model import EnvironmentData
+from utils.constants import APP_VERSION, ENERGY_MODEL_VERSION
 
 
 class FakeMetocService:
@@ -143,20 +145,21 @@ class AppCallbackSmokeTests(unittest.TestCase):
                 self.assertIn("isr_loop_distance_km", result[10])
                 self.assertIn("Energy Planner Summary", str(result[11]))
                 self.assertIn("Conservative planning energy", str(result[11]))
+                self.assertIn("Energy demand", str(result[11]))
+                self.assertIn("Battery sustainment", str(result[11]))
                 self.assertIn("Environmental burden", str(result[11]))
                 self.assertIn("Planning note", str(result[11]))
-                self.assertNotIn("Energy demand", str(result[11]))
                 self.assertNotIn("Available battery inventory", str(result[11]))
-                self.assertEqual(result[12].iloc[0]["Value"], "Conservative mission energy estimate (P95)")
-                self.assertIn("Barrel-of-oil equivalent", result[12]["Metric"].tolist())
+                self.assertIn("Conservative mission energy estimate (P95)", str(result[12]))
+                self.assertIn("Barrel-of-oil equivalent", str(result[12]))
                 self.assertEqual(result[8]["visible"], True)
                 self.assertEqual(result[9]["visible"], False)
                 csv_files = sorted(Path("runs").glob("*_energy_planner.csv"))
                 self.assertTrue(csv_files)
                 with csv_files[-1].open(newline="", encoding="utf-8") as handle:
                     record = next(csv.DictReader(handle))
-                self.assertEqual(record["app_version"], "v3.1-beta-dev")
-                self.assertEqual(record["model_version"], "energy_model_v3_1_beta_dev")
+                self.assertEqual(record["app_version"], APP_VERSION)
+                self.assertEqual(record["model_version"], ENERGY_MODEL_VERSION)
                 self.assertTrue(record["vehicle_catalog_version"])
                 self.assertTrue(record["metoc_lookup_lat"])
                 self.assertTrue(record["metoc_lookup_lon"])
@@ -191,10 +194,71 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertIn("Recommended track orientation", str(result[0]))
         self.assertIn("Energy Planner Summary", str(result[11]))
         self.assertIn("Search/MCM planning", str(result[11]))
-        self.assertEqual(result[12].iloc[0]["Value"], "Conservative mission energy estimate (P95)")
+        self.assertIn("Conservative mission energy estimate (P95)", str(result[12]))
         self.assertEqual(result[8]["visible"], True)
         self.assertEqual(result[9]["visible"], False)
         self.assertNotIn("isr_loop_distance_km", result[10])
+
+    def test_isr_reports_single_set_and_total_inventory_endurance(self) -> None:
+        """ISR should distinguish installed-set endurance from total available inventory."""
+        built = main.build_mission_and_prefill("ISR", json.dumps(RECTANGLE_GEOMETRY))
+        self.assertTrue(built[0], built[1])
+        result = main.run_from_ui(
+            "REMUS 300 - 4.5 kWh",
+            "ISR",
+            10,
+            3,
+            3,
+            10,
+            0,
+            0,
+            200,
+            True,
+            3.5,
+            3,
+            True,
+            1,
+            "12345",
+            0.6,
+            85,
+            26,
+            built[0],
+        )
+        summary = result[10]
+        self.assertIn("isr_single_set_endurance_hr", summary)
+        self.assertIn("isr_total_inventory_endurance_hr", summary)
+        self.assertIn("isr_completed_loops_single_set", summary)
+        self.assertIn("isr_completed_loops_total_inventory", summary)
+        self.assertIn("isr_completed_loops_full_single_set", summary)
+        self.assertIn("isr_partial_loop_distance_km_single_set", summary)
+        self.assertIn("isr_total_patrol_distance_km_single_set", summary)
+        self.assertIn("isr_total_patrol_distance_km_total_inventory", summary)
+        self.assertGreaterEqual(
+            summary["isr_completed_loops_total_inventory"],
+            summary["isr_completed_loops_single_set"],
+        )
+        self.assertGreaterEqual(
+            summary["isr_total_patrol_distance_km_single_set"],
+            summary["isr_completed_loops_full_single_set"] * summary["isr_loop_distance_km"],
+        )
+        self.assertIn("One installed set supports", str(result[11]))
+        self.assertIn("before recovery/swap", str(result[11]))
+        self.assertIn("Total available inventory supports", str(result[11]))
+        self.assertIn("before battery exhaustion", str(result[11]))
+        self.assertNotIn("completed patrol loop(s)", str(result[11]))
+        self.assertIn("plus", str(result[11]))
+        self.assertIn("Total patrol distance before recovery/swap", str(result[11]))
+        self.assertIn("Total patrol distance before battery exhaustion", str(result[11]))
+        self.assertGreater(len(result[7].axes[0].patches), 0)
+        self.assertIn("ISR Mission Energy Uncertainty Distribution", result[7].axes[0].get_title())
+        self.assertGreater(len(result[6].axes[0].collections), 0)
+
+    def test_small_energy_equivalents_do_not_round_to_zero(self) -> None:
+        """Small secondary equivalence values should retain useful precision."""
+        rows = dict(build_energy_equivalence_rows(3.8, "test basis"))
+        self.assertRegex(rows["Gigajoules"], r"0\.014 GJ")
+        self.assertRegex(rows["Tonnes of oil equivalent"], r"0\.000327 TOE")
+        self.assertRegex(rows["Barrel-of-oil equivalent"], r"0\.002235 BOE")
 
     def test_payload_line_runs_and_isr_accepts_line_geometry(self) -> None:
         """Payload and ISR should both accept line geometry with different mission logic."""
@@ -227,8 +291,12 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertIn("Energy Planner Summary", str(payload_run[11]))
         self.assertIn("Payload mission planning", str(payload_run[11]))
         self.assertIn("Conservative planning energy", str(payload_run[11]))
-        self.assertIn("Kilocalories", payload_run[12]["Metric"].tolist())
+        self.assertIn("Conservative energy margin", str(payload_run[11]))
+        self.assertIn("Kilocalories", str(payload_run[12]))
+        self.assertIn("Gigajoules", str(payload_run[12]))
+        self.assertNotIn("0.0 GJ", str(payload_run[12]))
         self.assertEqual(payload_run[8]["visible"], True)
+        self.assertIsNotNone(payload_run[8]["value"])
         self.assertEqual(payload_run[9]["visible"], False)
 
         isr_line = main.build_mission_and_prefill("ISR", json.dumps(LINE_GEOMETRY))
@@ -263,8 +331,12 @@ class AppCallbackSmokeTests(unittest.TestCase):
     def test_view_results_button_calls_results_tab_helper(self) -> None:
         """Active shortcut should use the robust Results/Report tab helper."""
         self.assertIn("goToResultsTab()", main.ACTIVE_RESULTS_BUTTON_HTML)
-        self.assertIn("text.includes(\"results\") || text.includes(\"report\")", main.CUSTOM_JS)
-        self.assertIn("window.goToResultsTab = goToResultsTab", main.CUSTOM_JS)
+        self.assertIn('window.goToResultsTab = function goToResultsTab()', main.CUSTOM_JS)
+        self.assertIn('findTabByText(["results", "report"])', main.CUSTOM_JS)
+        self.assertIn("scrollIntoView", main.CUSTOM_JS)
+        self.assertIn("window.goToSimulatorTab = function goToSimulatorTab()", main.CUSTOM_JS)
+        self.assertIn("Load Mission and Go to Simulator", Path("app/main.py").read_text(encoding="utf-8"))
+        self.assertIn("BUILD_MISSION_AND_GO_JS", Path("app/main.py").read_text(encoding="utf-8"))
         self.assertNotIn("Energy Planner CSV Export", Path("app/main.py").read_text(encoding="utf-8"))
 
     def test_loaded_mission_text_is_mode_specific(self) -> None:

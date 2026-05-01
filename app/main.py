@@ -13,6 +13,7 @@ from app.ui.reporting import (
     build_distribution_chart,
     build_energy_equivalence_rows,
     build_energy_planner_summary_html,
+    build_report_table_html,
     build_energy_time_chart,
     build_energy_summary_rows,
     build_environmental_input_rows,
@@ -68,8 +69,20 @@ CUSTOM_CSS = """
 .planner-summary p { margin: 8px 0; line-height: 1.45; }
 .metoc-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .posture { font-weight: 800; font-size: 18px; padding: 8px 12px; border-radius: 10px; background: #1f2937; }
-.metoc-grid { display: grid; grid-template-columns: repeat(5, minmax(140px, 1fr)); gap: 10px; margin-top: 12px; }
-.metoc-card { border-radius: 10px; padding: 10px; min-height: 120px; border: 2px solid #4b5563; }
+.report-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 14px; }
+.report-table th, .report-table td {
+  border-bottom: 1px solid #374151;
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+.report-table th { background: #1f2937; }
+.report-table .metric-col { width: 60%; }
+.report-table .value-col { width: 40%; }
+.metoc-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.metoc-card { flex: 1 1 150px; min-width: 140px; max-width: 220px; border-radius: 10px; padding: 10px; min-height: 120px; border: 2px solid #4b5563; }
 .metoc-card.green { background: #064e3b; border-color: #10b981; }
 .metoc-card.yellow { background: rgba(234, 179, 8, 0.16); border-color: #eab308; }
 .metoc-card.red { background: #7f1d1d; border-color: #ef4444; }
@@ -106,15 +119,16 @@ CUSTOM_CSS = """
 
 CUSTOM_JS = """
 function() {
-  function goToResultsTab() {
+  function findTabByText(words) {
     const candidates = Array.from(document.querySelectorAll('button, [role="tab"], .tabitem button'));
-    const matchesResultsTab = (el) => {
+    return candidates.find((el) => {
+      if (el.classList.contains("view-results-btn")) return false;
       const text = (el.innerText || el.textContent || "").trim().toLowerCase();
-      return !el.classList.contains("view-results-btn") && (text.includes("results") || text.includes("report"));
-    };
-    const target =
-      candidates.find((el) => el.getAttribute("role") === "tab" && matchesResultsTab(el)) ||
-      candidates.find(matchesResultsTab);
+      return words.some((word) => text.includes(word));
+    });
+  }
+  window.goToResultsTab = function goToResultsTab() {
+    const target = findTabByText(["results", "report"]);
     if (target) {
       target.click();
     }
@@ -124,8 +138,13 @@ function() {
         anchor.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     }, 400);
-  }
-  window.goToResultsTab = goToResultsTab;
+  };
+  window.goToSimulatorTab = function goToSimulatorTab() {
+    const target = findTabByText(["single-uuv", "simulator"]);
+    if (target) {
+      target.click();
+    }
+  };
   function setGeometryBox(text) {
     const box = document.querySelector('#geometry_json_box textarea');
     if (!box) return;
@@ -155,6 +174,29 @@ BUILD_MISSION_JS = """
       console.log("Could not read map iframe geometry output", e);
     }
   }
+  return [missionType, text];
+}
+"""
+
+BUILD_MISSION_AND_GO_JS = """
+(missionType, geometryText) => {
+  let text = geometryText || "";
+  if (!text.trim()) {
+    try {
+      const iframe = document.querySelector('#uuv_map_iframe');
+      const raw = iframe && iframe.contentWindow && iframe.contentWindow.document.getElementById('raw_output');
+      if (raw && (raw.innerText || raw.textContent || "").trim()) {
+        text = raw.innerText || raw.textContent || "";
+      }
+    } catch (e) {
+      console.log("Could not read map iframe geometry output", e);
+    }
+  }
+  setTimeout(() => {
+    if (window.goToSimulatorTab) {
+      window.goToSimulatorTab();
+    }
+  }, 800);
   return [missionType, text];
 }
 """
@@ -400,7 +442,7 @@ def run_from_ui(
     summary["return_to_start"] = bool(return_to_start)
     summary["additional_transit_km"] = safe_float(additional_transit_km, 0.0) or 0.0
     status = (
-        f"Simulation complete. Conservative mission energy: {float(summary['p95_energy_kwh']):.2f} kWh (P95). "
+        f"Simulation complete. Conservative mission energy: {float(summary['p95_energy_kwh']):.1f} kWh (P95). "
         f"Planning-level battery sets required: {summary['battery_sets_required_p80']} (P80)."
     )
     if summary["battery_inventory_sufficient_no_recharge"]:
@@ -413,8 +455,8 @@ def run_from_ui(
         status += f" Recommended track orientation: {summary['recommended_track_orientation']}."
     if mission_type in ISR_MISSIONS:
         status += (
-            f" Estimated ISR endurance: {float(summary.get('isr_max_time_on_station_hr', 0)):.1f} hr; "
-            f"completed patrol loops: {summary.get('isr_completed_loops', 0)}."
+            f" Estimated ISR endurance: {float(summary.get('isr_total_inventory_endurance_hr', 0)):.1f} hr using available inventory; "
+            f"completed patrol loops using inventory: {summary.get('isr_completed_loops_total_inventory', 0)}."
         )
 
     simulation_inputs = {
@@ -431,20 +473,20 @@ def run_from_ui(
         "manual_current_direction_deg": safe_float(current_direction_deg),
         "manual_sea_surface_temp_c": safe_float(temp_mean_c),
     }
-    energy_summary_df = rows_to_dataframe(build_energy_summary_rows(summary), ("Metric", "Value", "Unit"))
-    battery_sustainment_df = rows_to_dataframe(build_battery_sustainment_rows(summary), ("Metric", "Value", "Unit"))
-    mission_geometry_df = rows_to_dataframe(
+    energy_summary_html = build_report_table_html(build_energy_summary_rows(summary), "Energy Summary")
+    battery_sustainment_html = build_report_table_html(build_battery_sustainment_rows(summary), "Battery and Sustainment Summary")
+    mission_geometry_html = build_report_table_html(
         build_mission_geometry_summary_rows(summary, area, environment, simulation_inputs),
-        ("Metric", "Value", "Unit"),
+        "Mission Geometry Summary",
     )
-    environmental_inputs_df = rows_to_dataframe(
+    environmental_inputs_html = build_report_table_html(
         build_environmental_input_rows(summary, environment),
-        ("Metric", "Value", "Unit"),
+        "Environmental Inputs",
     )
     equivalence_energy_kwh, equivalence_basis = _energy_equivalence_planning_basis(summary)
-    energy_equivalence_df = rows_to_dataframe(
-        [(row[0], row[1]) for row in build_energy_equivalence_rows(equivalence_energy_kwh, equivalence_basis)],
-        ("Metric", "Value"),
+    energy_equivalence_html = build_report_table_html(
+        build_energy_equivalence_rows(equivalence_energy_kwh, equivalence_basis),
+        "Energy Storage Equivalence Lens",
     )
     fig_time = build_energy_time_chart(
         result.energy_samples_kwh,
@@ -453,8 +495,9 @@ def run_from_ui(
         int(summary["battery_sets_available"]),
         vehicle.recharge_hr,
         int(summary["battery_sets_required_p80"]),
+        mission_type=mission_type,
     )
-    fig_dist = build_distribution_chart(result.energy_samples_kwh, float(summary["p80_energy_kwh"]), float(summary["total_available_kwh"]))
+    fig_dist = build_distribution_chart(result.energy_samples_kwh, float(summary["p80_energy_kwh"]), float(summary["total_available_kwh"]), mission_type=mission_type)
     fig_snapshot = build_mapping_snapshot_chart(summary, area, environment, safe_float(track_spacing_m, 200.0) or 200.0)
     primary_visual_update = gr.update(value=fig_snapshot, visible=True)
     overlay_update = gr.update(value=None, visible=False)
@@ -472,17 +515,17 @@ def run_from_ui(
     return (
         status,
         ACTIVE_RESULTS_BUTTON_HTML,
-        energy_summary_df,
-        battery_sustainment_df,
-        mission_geometry_df,
-        environmental_inputs_df,
+        energy_summary_html,
+        battery_sustainment_html,
+        mission_geometry_html,
+        environmental_inputs_html,
         fig_time,
         fig_dist,
         primary_visual_update,
         overlay_update,
         summary,
         build_energy_planner_summary_html(summary, area, environment, vehicle),
-        energy_equivalence_df,
+        energy_equivalence_html,
         metoc_html(environment, METOC_SERVICE),
     )
 
@@ -528,6 +571,7 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                     payload_note = gr.Markdown("Draw a **line** from drop point / launch point to target site.", visible=False)
                     geometry_json = gr.Textbox(label="Map geometry", lines=1, visible=False, elem_id="geometry_json_box")
                     build_fetch_btn = gr.Button("Build Mission and Load Environment", variant="primary")
+                    build_go_sim_btn = gr.Button("Load Mission and Go to Simulator")
                     mission_status = gr.Textbox(label="Mission Builder Status", lines=3, interactive=False)
                 with gr.Column(scale=2):
                     map_html = gr.HTML(value=build_leaflet_iframe("Guam"), label="Mission Map")
@@ -582,7 +626,7 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
             gr.HTML("<div id='results-anchor'></div>")
             results_card = gr.HTML("<div class='uuv-card'>Run a mission simulation to populate results.</div>")
             gr.Markdown("### Energy Storage Equivalence Lens")
-            energy_equivalence_table = gr.Dataframe(interactive=False, wrap=True)
+            energy_equivalence_table = gr.HTML("")
             gr.Markdown(
                 "Energy-equivalence values are provided as a secondary sustainment-planning lens. "
                 "Oil-equivalent values are approximate conversions and do not imply direct fuel interchangeability."
@@ -594,13 +638,13 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                 "and 95th percentile simulation results. They are used to show how mission energy "
                 "demand changes under uncertainty."
             )
-            energy_summary_table = gr.Dataframe(interactive=False, wrap=True)
+            energy_summary_table = gr.HTML("")
             gr.Markdown("### Battery and Sustainment Summary")
-            battery_sustainment_table = gr.Dataframe(interactive=False, wrap=True)
+            battery_sustainment_table = gr.HTML("")
             gr.Markdown("### Mission Geometry Summary")
-            mission_geometry_summary_table = gr.Dataframe(interactive=False, wrap=True)
+            mission_geometry_summary_table = gr.HTML("")
             gr.Markdown("### Environmental Inputs")
-            environmental_inputs_table = gr.Dataframe(interactive=False, wrap=True)
+            environmental_inputs_table = gr.HTML("")
             energy_time_plot = gr.Plot(label="Mission Energy Progress and Battery Lens")
             results_plot = gr.Plot(label="Mission Energy Uncertainty Distribution")
             with gr.Row():
@@ -615,6 +659,31 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
             build_mission_and_prefill,
             inputs=[mission_type_builder, geometry_json],
             js=BUILD_MISSION_JS,
+            outputs=[
+                mission_context_state,
+                mission_status,
+                env_table,
+                mission_env_html,
+                geometry_json,
+                mission_type_sim,
+                manual_area_km2,
+                width_km,
+                height_km,
+                route_distance_km,
+                route_heading_deg,
+                current_mean,
+                current_dir,
+                temp_mean,
+                search_group,
+                payload_group,
+                isr_group,
+                mission_sequences,
+            ],
+        ).then(context_markdown, inputs=[mission_context_state], outputs=[mission_loaded_md])
+        build_go_sim_btn.click(
+            build_mission_and_prefill,
+            inputs=[mission_type_builder, geometry_json],
+            js=BUILD_MISSION_AND_GO_JS,
             outputs=[
                 mission_context_state,
                 mission_status,
