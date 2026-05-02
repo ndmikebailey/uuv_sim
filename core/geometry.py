@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Any, Iterable, Optional
 
-from models.mission_model import Bounds, LatLon, LocalPoint, MissionArea
+from models.mission_model import Bounds, LatLon, LocalPoint, MissionArea, MissionAreaSet
 from utils.constants import EARTH_RADIUS_KM
 from utils.parsing import parse_json_object, safe_float
 
@@ -256,9 +256,8 @@ def build_route(raw_points: list[LatLon]) -> MissionArea:
     )
 
 
-def parse_geometry_json(geometry_json_text: str) -> MissionArea:
-    """Parse Leaflet geometry handoff JSON into a structured mission area."""
-    geom = parse_json_object(geometry_json_text)
+def _parse_geometry_mapping(geom: dict[str, Any]) -> MissionArea:
+    """Parse one geometry mapping into a structured mission area."""
     if geom.get("error"):
         raise ValueError(str(geom["error"]))
 
@@ -289,6 +288,37 @@ def parse_geometry_json(geometry_json_text: str) -> MissionArea:
             LatLon(float(end_lat), float(end_lon)),
         ]
     return build_route(route_points)
+
+
+def parse_geometry_json(geometry_json_text: str) -> MissionArea | MissionAreaSet:
+    """Parse Leaflet geometry handoff JSON into a structured mission area."""
+    geom = parse_json_object(geometry_json_text)
+    if geom.get("error"):
+        raise ValueError(str(geom["error"]))
+
+    raw_areas = geom.get("areas") or geom.get("search_areas") or geom.get("geometries")
+    if isinstance(raw_areas, list):
+        areas = [
+            _parse_geometry_mapping(item)
+            for item in raw_areas
+            if isinstance(item, dict)
+        ]
+        search_areas = [area for area in areas if area.is_search_area]
+        if len(search_areas) != len(areas):
+            raise ValueError("Multi-area Search/MCM geometry may only include rectangles or polygons.")
+        if not search_areas:
+            raise ValueError("Multi-area geometry did not include any search areas.")
+        if len(search_areas) == 1:
+            return search_areas[0]
+        total_area = sum(float(area.area_km2 or 0.0) for area in search_areas)
+        representative_points = [(area.centroid_lat, area.centroid_lon) for area in search_areas]
+        return MissionAreaSet(
+            areas=search_areas,
+            total_area_km2=total_area,
+            representative_points=representative_points,
+        )
+
+    return _parse_geometry_mapping(geom)
 
 
 def manual_rectangle_area(width_km: float, height_km: float, area_km2: float | None = None) -> MissionArea:

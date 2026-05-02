@@ -28,7 +28,7 @@ from core.energy import run_energy_simulation
 from core.geometry import manual_payload_route, manual_rectangle_area
 from core.mission import build_mission_context
 from models.environment_model import EnvironmentData
-from models.mission_model import MissionArea
+from models.mission_model import MissionArea, MissionAreaSet
 from models.vehicle_model import VEHICLE_CATALOG
 from services.marine_api import OpenMeteoMarineClient
 from services.metoc_fusion import MetocFusionService
@@ -289,6 +289,9 @@ def build_mission_and_prefill(mission_type: str, geometry_json_text: str) -> tup
     environment = context.environment
     context_dict = context.to_dict()
     context_dict["source_geometry_json"] = geometry_json_text
+    area_km2 = getattr(area, "total_area_km2", area.area_km2)
+    width_km = getattr(area, "width_km", None)
+    height_km = getattr(area, "height_km", None)
     return (
         context_dict,
         result.status,
@@ -296,11 +299,11 @@ def build_mission_and_prefill(mission_type: str, geometry_json_text: str) -> tup
         html,
         geometry_json_text,
         mission_type,
-        area.area_km2 or 10,
-        area.width_km or 3,
-        area.height_km or 3,
-        area.route_distance_km or 10,
-        area.route_heading_deg or 0,
+        area_km2 or 10,
+        width_km or 3,
+        height_km or 3,
+        getattr(area, "route_distance_km", None) or 10,
+        getattr(area, "route_heading_deg", None) or 0,
         environment.current_speed_kts_mean or 0.5,
         environment.current_direction_deg_mean or 0,
         environment.sea_surface_temp_c_mean or 25,
@@ -322,13 +325,16 @@ def _area_environment_from_state(
     current_direction_deg: float,
     temp_mean_c: float,
     context: dict[str, Any],
-) -> tuple[str, MissionArea, EnvironmentData]:
+) -> tuple[str, MissionArea | MissionAreaSet, EnvironmentData]:
     """Rebuild structured area/environment values from Gradio state."""
     if context:
         mission_type = str(context.get("mission_type") or mission_type)
         area_payload = context.get("area", {})
         env_payload = context.get("environment", {})
-        area = MissionArea.from_dict(area_payload if isinstance(area_payload, dict) else context)
+        if isinstance(area_payload, dict) and area_payload.get("geometry_type") == "MultiArea":
+            area = MissionAreaSet.from_dict(area_payload)
+        else:
+            area = MissionArea.from_dict(area_payload if isinstance(area_payload, dict) else context)
         environment = EnvironmentData(**env_payload) if isinstance(env_payload, dict) else EnvironmentData()
         environment.current_speed_kts_mean = safe_float(current_mean_kts, environment.current_speed_kts_mean)
         environment.current_direction_deg_mean = safe_float(current_direction_deg, environment.current_direction_deg_mean)
@@ -424,10 +430,11 @@ def run_from_ui(
     )
     vehicle = VEHICLE_CATALOG[platform_name]
     effective_mission_sequences = 1 if mission_type in ISR_MISSIONS else max(1, safe_int(mission_sequences, 1))
+    simulation_area = area.aggregate_area() if isinstance(area, MissionAreaSet) and mission_type in SEARCH_MISSIONS else area
     result = run_energy_simulation(
         vehicle=vehicle,
         mission_type=mission_type,
-        area=area,
+        area=simulation_area,
         environment=environment,
         additional_transit_km=safe_float(additional_transit_km, 0.0) or 0.0,
         track_spacing_m=safe_float(track_spacing_m, 200.0) or 200.0,
@@ -439,6 +446,16 @@ def run_from_ui(
         rng_seed=parsed_seed,
     )
     summary = result.summary
+    if isinstance(area, MissionAreaSet) and mission_type in SEARCH_MISSIONS:
+        summary.update(
+            {
+                "number_of_search_areas": len(area.areas),
+                "metoc_sample_count": len(area.representative_points),
+                "metoc_lookup_points": area.representative_points,
+                "total_search_area_km2": area.total_area_km2,
+                "metoc_aggregation_method": "area-centroid vector average",
+            }
+        )
     summary["return_to_start"] = bool(return_to_start)
     summary["additional_transit_km"] = safe_float(additional_transit_km, 0.0) or 0.0
     status = (
@@ -504,7 +521,7 @@ def run_from_ui(
     source_geometry_json = context.get("source_geometry_json") if context else None
     _json_record_path, _csv_record_path = write_run_record(
         mission_type=mission_type,
-        area=area,
+        area=simulation_area,
         vehicle=vehicle,
         environment=environment,
         simulation_inputs=simulation_inputs,

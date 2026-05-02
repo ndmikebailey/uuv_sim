@@ -80,6 +80,23 @@ CONCAVE_POLYGON_GEOMETRY = {
     ],
 }
 
+MULTI_AREA_GEOMETRY = {
+    "geometry_type": "MultiArea",
+    "areas": [
+        RECTANGLE_GEOMETRY,
+        {
+            "geometry_type": "rectangle",
+            "bounds": {"north": 13.49, "south": 13.47, "east": 144.86, "west": 144.83},
+            "vertices": [
+                {"lat": 13.47, "lon": 144.83},
+                {"lat": 13.47, "lon": 144.86},
+                {"lat": 13.49, "lon": 144.86},
+                {"lat": 13.49, "lon": 144.83},
+            ],
+        },
+    ],
+}
+
 LINE_GEOMETRY = {
     "geometry_type": "line",
     "route_points": [
@@ -198,6 +215,43 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertEqual(result[8]["visible"], True)
         self.assertEqual(result[9]["visible"], False)
         self.assertNotIn("isr_loop_distance_km", result[10])
+
+    def test_multi_area_search_report_includes_area_and_metoc_counts(self) -> None:
+        """Multi-area Search/MCM should report aggregate area and METOC sample count."""
+        built = main.build_mission_and_prefill("Area Search / MCM", json.dumps(MULTI_AREA_GEOMETRY))
+        self.assertTrue(built[0], built[1])
+        loaded_text = main.context_markdown(built[0])
+        self.assertIn("Multi-area search plan", loaded_text)
+        self.assertIn("METOC sampled points:** 2", loaded_text)
+        result = main.run_from_ui(
+            "REMUS 300 - 4.5 kWh",
+            "Area Search / MCM",
+            10,
+            3,
+            3,
+            10,
+            0,
+            0,
+            200,
+            True,
+            3.5,
+            1,
+            True,
+            1,
+            "12345",
+            0.6,
+            85,
+            26,
+            built[0],
+        )
+        summary = result[10]
+        self.assertEqual(summary["number_of_search_areas"], 2)
+        self.assertEqual(summary["metoc_sample_count"], 2)
+        self.assertEqual(summary["metoc_aggregation_method"], "area-centroid vector average")
+        self.assertGreater(summary["total_search_area_km2"], 0.0)
+        self.assertIn("Number of search areas", str(result[4]))
+        self.assertIn("METOC sampled points", str(result[4]))
+        self.assertIn("uses 2 selected search area", str(result[11]))
 
     def test_isr_reports_single_set_and_total_inventory_endurance(self) -> None:
         """ISR should distinguish installed-set endurance from total available inventory."""

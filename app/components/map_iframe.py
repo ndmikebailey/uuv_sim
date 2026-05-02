@@ -9,7 +9,6 @@ from utils.constants import REGION_PRESETS
 
 def build_leaflet_iframe(region_name: str = "Guam") -> str:
     """Return a Leaflet iframe that emits raw geometry JSON to Gradio."""
-    # TODO: Restore multi-area Search/MCM geometry support so users can draw multiple search boxes/polygons around coastlines. Aggregate total area and show all selected regions in the Results map.
     lat, lon, zoom = REGION_PRESETS.get(region_name, REGION_PRESETS["Guam"])
     inner_html = f"""
 <!DOCTYPE html>
@@ -154,6 +153,9 @@ def build_leaflet_iframe(region_name: str = "Guam") -> str:
       if (summary.geometry_type === 'line') {{
         return '<div class="snap-grid"><div class="snap-card"><div class="snap-label">Selected Geometry</div><div class="snap-value">Route</div><div class="snap-sub">Route points captured.</div></div><div class="snap-card"><div class="snap-label">Route</div><div class="snap-value">' + summary.route_distance_km + ' km</div><div class="snap-sub">Heading: ' + summary.route_heading_deg + ' deg</div></div><div class="snap-card"><div class="snap-label">Geometry center</div><div class="snap-value">' + summary.centroid_lat + ', ' + summary.centroid_lon + '</div><div class="snap-sub">Backend recomputes on mission load.</div></div></div>';
       }}
+      if (summary.geometry_type === 'MultiArea') {{
+        return '<div class="snap-grid"><div class="snap-card"><div class="snap-label">Selected Geometry</div><div class="snap-value">Multi-area</div><div class="snap-sub">' + summary.number_of_search_areas + ' areas captured.</div></div><div class="snap-card"><div class="snap-label">Total Area</div><div class="snap-value">' + summary.total_area_km2 + ' sq km</div><div class="snap-sub">Backend plans combined search area.</div></div><div class="snap-card"><div class="snap-label">METOC samples</div><div class="snap-value">' + summary.representative_points.length + '</div><div class="snap-sub">Area centroid lookup points.</div></div></div>';
+      }}
       const label = summary.geometry_type === 'polygon' ? 'Polygon' : 'Rectangle';
       const areaText = summary.area_km2 ? summary.area_km2 + ' sq km' : summary.vertices.length + ' pts';
       const detailText = summary.width_km && summary.height_km ? 'Bounding box: ' + summary.width_km + ' x ' + summary.height_km + ' km' : 'Backend computes area on mission load.';
@@ -165,18 +167,52 @@ def build_leaflet_iframe(region_name: str = "Guam") -> str:
       window.parent.postMessage({{ type: "uuv_geometry", payload: summary }}, "*");
     }}
     function summarizeLayer(layer) {{
-      if (layer instanceof L.Rectangle) sendGeometry(rectangleSummary(layer));
-      else if (layer instanceof L.Polygon) sendGeometry(polygonSummary(layer));
-      else if (layer instanceof L.Polyline) sendGeometry(lineSummary(layer));
-      else sendGeometry({{ error: "Unsupported geometry type." }});
+      if (layer instanceof L.Rectangle) return rectangleSummary(layer);
+      if (layer instanceof L.Polygon) return polygonSummary(layer);
+      if (layer instanceof L.Polyline) return lineSummary(layer);
+      return {{ error: "Unsupported geometry type." }};
+    }}
+    function summarizeAllAreas() {{
+      const areas = [];
+      drawnItems.eachLayer(function(layer) {{
+        if (layer instanceof L.Rectangle) areas.push(rectangleSummary(layer));
+        else if (layer instanceof L.Polygon) areas.push(polygonSummary(layer));
+      }});
+      if (areas.length === 0) {{
+        sendGeometry({{}});
+      }} else if (areas.length === 1) {{
+        sendGeometry(areas[0]);
+      }} else {{
+        const totalArea = areas.reduce((sum, area) => sum + (area.area_km2 || 0), 0);
+        sendGeometry({{
+          geometry_type: "MultiArea",
+          areas: areas,
+          total_area_km2: +totalArea.toFixed(3),
+          area_km2: +totalArea.toFixed(3),
+          number_of_search_areas: areas.length,
+          representative_points: areas.map(area => ({{ lat: area.centroid_lat, lon: area.centroid_lon }})),
+          centroid_lat: +(areas.reduce((sum, area) => sum + area.centroid_lat, 0) / areas.length).toFixed(6),
+          centroid_lon: +(areas.reduce((sum, area) => sum + area.centroid_lon, 0) / areas.length).toFixed(6)
+        }});
+      }}
     }}
     map.on(L.Draw.Event.CREATED, function(event) {{
-      drawnItems.clearLayers();
+      if (event.layer instanceof L.Polyline && !(event.layer instanceof L.Polygon)) {{
+        drawnItems.clearLayers();
+        drawnItems.addLayer(event.layer);
+        sendGeometry(summarizeLayer(event.layer));
+        return;
+      }}
+      drawnItems.eachLayer(function(layer) {{
+        if (layer instanceof L.Polyline && !(layer instanceof L.Polygon)) {{
+          drawnItems.removeLayer(layer);
+        }}
+      }});
       drawnItems.addLayer(event.layer);
-      summarizeLayer(event.layer);
+      summarizeAllAreas();
     }});
     map.on(L.Draw.Event.EDITED, function(event) {{
-      event.layers.eachLayer(function(layer) {{ summarizeLayer(layer); }});
+      summarizeAllAreas();
     }});
     map.on(L.Draw.Event.DELETED, function() {{
       document.getElementById("raw_output").textContent = "";

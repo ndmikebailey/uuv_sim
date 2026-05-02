@@ -13,7 +13,7 @@ import pandas as pd
 from core.environment import current_components, payload_current_penalty
 from core.geometry import clipped_search_lanes, isr_path_distance_per_loop_km, local_bounds, search_polygon_points
 from models.environment_model import EnvironmentData
-from models.mission_model import MissionArea
+from models.mission_model import MissionArea, MissionAreaSet
 from services.metoc_fusion import MetocFusionService
 from utils.constants import EARTH_RADIUS_KM, ISR_MISSIONS, PAYLOAD_MISSIONS, SEARCH_MISSIONS
 
@@ -252,7 +252,9 @@ def _isr_planning_note(summary: dict[str, object]) -> str:
 def _search_planning_note(summary: dict[str, object], area: MissionArea) -> str:
     """Build the mission-specific Search/MCM planning note."""
     parts: list[str] = []
-    search_area = _as_float(area.area_km2)
+    search_area = _as_float(summary.get("total_search_area_km2") or area.area_km2)
+    area_count = _as_int(summary.get("number_of_search_areas"))
+    metoc_count = _as_int(summary.get("metoc_sample_count"))
     track_spacing = _as_float(summary.get("track_spacing_m"))
     orientation = summary.get("recommended_track_orientation")
     track_distance = _as_float(summary.get("search_track_distance_km"))
@@ -260,7 +262,12 @@ def _search_planning_note(summary: dict[str, object], area: MissionArea) -> str:
     sets_required = _as_int(summary.get("battery_sets_required_p80"))
     sets_available = _as_int(summary.get("battery_sets_available"))
     if search_area is not None:
-        parts.append(f"search area is {_fmt_value(search_area)} sq km")
+        if area_count and area_count > 1:
+            parts.append(f"uses {fmt_int(area_count)} selected search area(s), totaling {_fmt_value(search_area)} sq km")
+        else:
+            parts.append(f"search area is {_fmt_value(search_area)} sq km")
+    if metoc_count and metoc_count > 1:
+        parts.append(f"METOC inputs are averaged from {fmt_int(metoc_count)} area centroid lookup point(s)")
     if track_spacing is not None:
         parts.append(f"track spacing is {_fmt_value(track_spacing, 0)} m")
     if orientation and orientation != "N/A":
@@ -575,12 +582,22 @@ def build_battery_sustainment_rows(summary: dict[str, object]) -> list[tuple[str
 
 def build_mission_geometry_summary_rows(
     summary: dict[str, object],
-    area: MissionArea,
+    area: MissionArea | MissionAreaSet,
     environment: EnvironmentData,
     simulation_inputs: dict[str, object],
 ) -> list[tuple[str, object, str]]:
     """Build mission-specific geometry rows without search/ISR/payload leakage."""
     mission_type = str(summary.get("mission_type") or "")
+    if mission_type in SEARCH_MISSIONS and isinstance(area, MissionAreaSet):
+        return [
+            ("Geometry", "Multi-area search plan", ""),
+            ("Number of search areas", summary.get("number_of_search_areas", len(area.areas)), "areas"),
+            ("Total search area", _float_or_blank(summary.get("total_search_area_km2", area.total_area_km2)), "sq km"),
+            ("METOC sampled points", summary.get("metoc_sample_count", len(area.representative_points)), "points"),
+            ("Aggregate current", f"{fmt1(environment.current_speed_kts_mean)} kts @ {fmt1(environment.current_direction_deg_mean)} deg", ""),
+            ("Planning environment", "averaged from area centroids", ""),
+            ("METOC aggregation method", summary.get("metoc_aggregation_method", "area-centroid vector average"), ""),
+        ]
     if mission_type in PAYLOAD_MISSIONS:
         return [
             ("Route distance", _float_or_blank(area.route_distance_km or summary.get("route_distance_km")), "km"),
@@ -746,14 +763,25 @@ def context_markdown(context: dict[str, Any]) -> str:
     environment = context.get("environment", {}) if isinstance(context.get("environment"), dict) else context
     area_obj = _mission_area_from_context(area_data) if isinstance(area_data, dict) else None
     if mission_type in SEARCH_MISSIONS:
-        shape_label = "Polygon" if area_data.get("geometry_type") == "polygon" else "Rectangle"
-        geom = (
-            f"**Mission loaded:** {mission_type}  \n"
-            f"**Geometry:** {shape_label} search area  \n"
-            f"**Area:** {fmt1(area_data.get('area_km2'))} sq km  \n"
-            f"**Dimensions:** {fmt1(area_data.get('width_km'))} km x {fmt1(area_data.get('height_km'))} km  \n"
-            f"**METOC lookup point:** area centroid, {fmt_coord(area_data.get('centroid_lat'))}, {fmt_coord(area_data.get('centroid_lon'))}"
-        )
+        if area_data.get("geometry_type") == "MultiArea":
+            point_count = len(area_data.get("representative_points", [])) if isinstance(area_data.get("representative_points"), list) else 0
+            geom = (
+                f"**Mission loaded:** {mission_type}  \n"
+                f"**Geometry:** Multi-area search plan  \n"
+                f"**Number of search areas:** {fmt_int(area_data.get('number_of_search_areas'))}  \n"
+                f"**Total search area:** {fmt1(area_data.get('total_area_km2') or area_data.get('area_km2'))} sq km  \n"
+                f"**METOC sampled points:** {fmt_int(point_count)}  \n"
+                f"**Planning environment:** averaged from area centroids"
+            )
+        else:
+            shape_label = "Polygon" if area_data.get("geometry_type") == "polygon" else "Rectangle"
+            geom = (
+                f"**Mission loaded:** {mission_type}  \n"
+                f"**Geometry:** {shape_label} search area  \n"
+                f"**Area:** {fmt1(area_data.get('area_km2'))} sq km  \n"
+                f"**Dimensions:** {fmt1(area_data.get('width_km'))} km x {fmt1(area_data.get('height_km'))} km  \n"
+                f"**METOC lookup point:** area centroid, {fmt_coord(area_data.get('centroid_lat'))}, {fmt_coord(area_data.get('centroid_lon'))}"
+            )
     elif mission_type in PAYLOAD_MISSIONS:
         route_points = _points_from_dicts(area_data.get("route_points") or area_data.get("vertices"))
         if len(route_points) >= 2:
@@ -1094,7 +1122,7 @@ def _set_limits(ax: Any, points: list[tuple[float, float]], equal_aspect: bool) 
     return min_x, max_x, min_y, max_y
 
 
-def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea, environment: EnvironmentData, track_spacing_m: float) -> Any:
+def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea | MissionAreaSet, environment: EnvironmentData, track_spacing_m: float) -> Any:
     """Render the report map snapshot panel."""
     fig, ax = plt.subplots(figsize=(6.7, 5.6), dpi=120)
     mission_type = str(summary.get("mission_type", ""))
@@ -1159,6 +1187,60 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea, 
         )
         ax.legend(loc="upper right", fontsize=8)
         fig.tight_layout(rect=(0, 0.06, 1, 1))
+        return fig
+
+    if mission_type in SEARCH_MISSIONS and isinstance(area, MissionAreaSet):
+        all_vertices = [vertex for search_area in area.areas for vertex in search_area.vertices]
+        if not all_vertices:
+            ax.text(0.5, 0.5, "Multi-area search snapshot is unavailable for this geometry.", ha="center", va="center", wrap=True, transform=ax.transAxes)
+            ax.axis("off")
+            fig.tight_layout()
+            return fig
+        lat0 = sum(vertex.lat for vertex in all_vertices) / len(all_vertices)
+        lon0 = sum(vertex.lon for vertex in all_vertices) / len(all_vertices)
+        cos_lat0 = max(abs(math.cos(math.radians(lat0))), 1e-6)
+        all_points: list[tuple[float, float]] = []
+        for index, search_area in enumerate(area.areas, start=1):
+            points = [
+                (
+                    EARTH_RADIUS_KM * math.radians(vertex.lon - lon0) * cos_lat0,
+                    EARTH_RADIUS_KM * math.radians(vertex.lat - lat0),
+                )
+                for vertex in search_area.vertices
+            ]
+            if len(points) < 3:
+                continue
+            xs = [point[0] for point in points] + [points[0][0]]
+            ys = [point[1] for point in points] + [points[0][1]]
+            ax.fill(xs, ys, color="#38bdf8", alpha=0.12)
+            ax.plot(xs, ys, color="#075985", linewidth=2.0)
+            cx = sum(point[0] for point in points) / len(points)
+            cy = sum(point[1] for point in points) / len(points)
+            ax.text(cx, cy, f"A{index}", ha="center", va="center", fontsize=9, fontweight="bold")
+            all_points.extend(points)
+        if not all_points:
+            ax.text(0.5, 0.5, "Multi-area search snapshot is unavailable for this geometry.", ha="center", va="center", wrap=True, transform=ax.transAxes)
+            ax.axis("off")
+            fig.tight_layout()
+            return fig
+        bounds = _set_limits(ax, all_points, equal_aspect=True)
+        _draw_current_arrow(ax, environment, bounds)
+        _draw_north_arrow(ax, *bounds)
+        _draw_scale_bar(ax, *bounds)
+        ax.set_title("Multi-Area Search Plan Snapshot", pad=10, fontsize=13)
+        fig.text(
+            0.5,
+            0.025,
+            (
+                f"Areas: {fmt_int(len(area.areas))} | Total area: {fmt1(area.total_area_km2)} sq km | "
+                "Swath overlay currently shown for aggregate planning; per-area lane rendering is simplified."
+            ),
+            ha="center",
+            va="bottom",
+            fontsize=8,
+            wrap=True,
+        )
+        fig.tight_layout(rect=(0, 0.08, 1, 1))
         return fig
 
     if mission_type not in SEARCH_MISSIONS or not area.is_search_area:

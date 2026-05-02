@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+from typing import Any
 
 from core.geometry import parse_geometry_json
 from models.environment_model import EnvironmentData
-from models.mission_model import MissionArea, MissionContext
+from models.mission_model import MissionArea, MissionAreaSet, MissionContext
 from services.metoc_fusion import MetocFusionService
 from utils.constants import ISR_MISSIONS, PAYLOAD_MISSIONS, SEARCH_MISSIONS
 
@@ -21,8 +23,14 @@ class MissionBuildResult:
     environment_rows: list[tuple[str, object, str]]
 
 
-def validate_mission_geometry(mission_type: str, area: MissionArea) -> None:
+def validate_mission_geometry(mission_type: str, area: MissionArea | MissionAreaSet) -> None:
     """Validate mission type against selected map geometry."""
+    if isinstance(area, MissionAreaSet):
+        if mission_type not in SEARCH_MISSIONS:
+            raise ValueError("Multi-area geometry is supported for Area Search / MCM only.")
+        if not area.areas:
+            raise ValueError("Multi-area Search/MCM requires at least one search area.")
+        return
     if mission_type in PAYLOAD_MISSIONS and not area.is_payload_route:
         raise ValueError("Payload Delivery requires a line route. Draw a line from drop point to target site.")
     if mission_type in SEARCH_MISSIONS and not area.is_search_area:
@@ -59,6 +67,96 @@ def choose_environment_lookup_point(mission_type: str, area: MissionArea) -> tup
     return centroid
 
 
+def choose_environment_lookup_points(mission_type: str, area: MissionArea | MissionAreaSet) -> list[tuple[float, float]]:
+    """Choose one or more METOC lookup points for a mission."""
+    if isinstance(area, MissionAreaSet) and mission_type in SEARCH_MISSIONS:
+        return list(area.representative_points)
+    return [choose_environment_lookup_point(mission_type, area)]  # type: ignore[arg-type]
+
+
+def _mean(values: list[float]) -> float | None:
+    """Return the mean of available scalar values."""
+    return sum(values) / len(values) if values else None
+
+
+def _vector_average_current(environments: list[EnvironmentData]) -> tuple[float | None, float | None]:
+    """Average current vectors using compass-direction convention."""
+    vectors: list[tuple[float, float]] = []
+    for environment in environments:
+        speed = environment.current_speed_kts_mean
+        direction = environment.current_direction_deg_mean
+        if speed is None or direction is None:
+            continue
+        radians = math.radians(direction)
+        vectors.append((speed * math.sin(radians), speed * math.cos(radians)))
+    if not vectors:
+        return None, None
+    mean_u = sum(vector[0] for vector in vectors) / len(vectors)
+    mean_v = sum(vector[1] for vector in vectors) / len(vectors)
+    speed = math.hypot(mean_u, mean_v)
+    direction = (math.degrees(math.atan2(mean_u, mean_v)) + 360.0) % 360.0
+    return speed, direction
+
+
+def aggregate_environments(
+    environments: list[EnvironmentData],
+    lookup_points: list[tuple[float, float]],
+) -> EnvironmentData:
+    """Aggregate per-area METOC data into one planning environment."""
+    if not environments:
+        return EnvironmentData(
+            marine_error="No per-area METOC values were available.",
+            weather_error="No per-area METOC values were available.",
+        )
+
+    current_speed, current_direction = _vector_average_current(environments)
+
+    def scalar(name: str) -> float | None:
+        values = [float(value) for env in environments if (value := getattr(env, name)) is not None]
+        return _mean(values)
+
+    marine_errors = [env.marine_error for env in environments if env.marine_error]
+    weather_errors = [env.weather_error for env in environments if env.weather_error]
+    return EnvironmentData(
+        current_speed_kts_mean=current_speed,
+        current_direction_deg_mean=current_direction,
+        sea_surface_temp_c_mean=scalar("sea_surface_temp_c_mean"),
+        sea_level_height_m=scalar("sea_level_height_m"),
+        wave_height_m=scalar("wave_height_m"),
+        wave_direction_deg=scalar("wave_direction_deg"),
+        wave_period_s=scalar("wave_period_s"),
+        wind_wave_height_m=scalar("wind_wave_height_m"),
+        swell_wave_height_m=scalar("swell_wave_height_m"),
+        air_temp_c=scalar("air_temp_c"),
+        relative_humidity_pct=scalar("relative_humidity_pct"),
+        apparent_temp_c=scalar("apparent_temp_c"),
+        precipitation_mm=scalar("precipitation_mm"),
+        weather_code=scalar("weather_code"),
+        cloud_cover_pct=scalar("cloud_cover_pct"),
+        pressure_msl_hpa=scalar("pressure_msl_hpa"),
+        surface_pressure_hpa=scalar("surface_pressure_hpa"),
+        wind_speed_kts_mean=scalar("wind_speed_kts_mean"),
+        wind_direction_deg_mean=scalar("wind_direction_deg_mean"),
+        wind_gusts_kts=scalar("wind_gusts_kts"),
+        weather_summary="Averaged from area centroid lookup points.",
+        marine_error="; ".join(marine_errors) or None,
+        weather_error="; ".join(weather_errors) or None,
+        raw_marine_api_json={
+            "aggregation_method": "area-centroid vector average",
+            "lookup_points": lookup_points,
+            "samples": [env.raw_marine_api_json for env in environments],
+        },
+        raw_weather_api_json={
+            "aggregation_method": "area-centroid vector average",
+            "lookup_points": lookup_points,
+            "samples": [env.raw_weather_api_json for env in environments],
+        },
+        marine_query_params={"lookup_points": lookup_points},
+        weather_query_params={"lookup_points": lookup_points},
+        source="Open-Meteo area-centroid average",
+    )
+
+
 def build_mission_context(
     mission_type: str,
     geometry_json_text: str,
@@ -71,11 +169,37 @@ def build_mission_context(
     except ValueError as exc:
         return MissionBuildResult(False, f"Mission build failed: {exc}", None, [("Mission build failed", str(exc), "")])
 
-    lookup_lat, lookup_lon = choose_environment_lookup_point(mission_type, area)
-    environment = metoc_service.fetch(lookup_lat, lookup_lon)
+    lookup_points = choose_environment_lookup_points(mission_type, area)
+    environments: list[EnvironmentData] = []
+    errors: list[str] = []
+    for lookup_lat, lookup_lon in lookup_points:
+        try:
+            environments.append(metoc_service.fetch(lookup_lat, lookup_lon))
+        except Exception as exc:
+            errors.append(f"{lookup_lat:.5f},{lookup_lon:.5f}: {exc}")
+    if len(lookup_points) > 1:
+        environment = aggregate_environments(environments, lookup_points)
+        if errors:
+            environment.marine_error = "; ".join(filter(None, [environment.marine_error, *errors]))
+        lookup_lat, lookup_lon = area.centroid_lat, area.centroid_lon  # type: ignore[union-attr]
+    elif environments:
+        environment = environments[0]
+        lookup_lat, lookup_lon = lookup_points[0]
+    else:
+        environment = EnvironmentData(marine_error="; ".join(errors), weather_error="; ".join(errors))
+        lookup_lat, lookup_lon = lookup_points[0]
     context = MissionContext(mission_type=mission_type, area=area, environment=environment)
     rows = environment.table_rows(lookup_lat, lookup_lon)
+    if len(lookup_points) > 1:
+        rows.extend(
+            [
+                ("METOC aggregation method", "area-centroid vector average", ""),
+                ("METOC sampled points", len(lookup_points), "points"),
+            ]
+        )
     status = "Mission geometry and Open-Meteo environmental data loaded."
+    if len(lookup_points) > 1:
+        status = f"Multi-area Search/MCM mission loaded with {len(lookup_points)} area centroid METOC samples."
     if environment.marine_error or environment.weather_error:
         status += f"\nMarine status: {environment.marine_error or 'OK'}\nWeather status: {environment.weather_error or 'OK'}"
     return MissionBuildResult(True, status, context, rows)
