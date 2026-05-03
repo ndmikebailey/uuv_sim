@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,11 @@ class VehicleState:
     usable_fraction: float
     usable_basis: str
     source_note: str
+    dry_weight_kg: Optional[float] = None
+    hotel_fraction: Optional[float] = None
+    recoverable: Optional[bool] = None
+    rechargeable: Optional[bool] = None
+    default_payload_recovery_mode: Optional[str] = None
 
     @property
     def average_power_kw(self) -> float:

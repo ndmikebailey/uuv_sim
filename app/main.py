@@ -19,6 +19,7 @@ from app.ui.reporting import (
     build_environmental_input_rows,
     build_mapping_snapshot_chart,
     build_mission_geometry_summary_rows,
+    build_sustainment_projection_rows,
     context_markdown,
     env_table_to_html,
     metoc_html,
@@ -40,6 +41,7 @@ from utils.parsing import parse_rng_seed, safe_float, safe_int
 METOC_SERVICE = MetocFusionService(
     marine_client=OpenMeteoMarineClient(),
     weather_client=OpenMeteoWeatherClient(),
+    salinity_enabled=True,
 )
 
 CUSTOM_CSS = """
@@ -211,7 +213,10 @@ ACTIVE_RESULTS_BUTTON_HTML = """
 <button class="view-results-btn active" onclick="goToResultsTab()">
   View Results
 </button>
+<div class="small-muted">Go to Results tab. Your simulation is ready.</div>
 """
+
+MISSION_READY_FOR_SIM_TEXT = "Now that mission parameters are set, go to UUV simulation."
 
 
 def mission_builder_visibility(mission_type: str) -> tuple[Any, Any]:
@@ -250,6 +255,11 @@ def mission_input_visibility(mission_type: str) -> tuple[Any, Any, Any, Any]:
         gr.update(visible=mission_type in ISR_MISSIONS),
         _mission_sequence_visibility(mission_type),
     )
+
+
+def sustainment_projection_visibility(enabled: bool) -> Any:
+    """Show optional mission projection controls only when requested."""
+    return gr.update(visible=bool(enabled))
 
 
 def refresh_map(region: str) -> str:
@@ -294,7 +304,7 @@ def build_mission_and_prefill(mission_type: str, geometry_json_text: str) -> tup
     height_km = getattr(area, "height_km", None)
     return (
         context_dict,
-        result.status,
+        f"{result.status}\n\n{MISSION_READY_FOR_SIM_TEXT}",
         df,
         html,
         geometry_json_text,
@@ -375,6 +385,33 @@ def _area_environment_from_state(
     return mission_type, area, environment
 
 
+def _planning_weeks(value: object) -> float:
+    """Convert compact planning-duration UI text to weeks."""
+    mapping = {
+        "1 week": 1.0,
+        "1 month": 4.0,
+        "3 months": 13.0,
+    }
+    return mapping.get(str(value), safe_float(value, 4.0) or 4.0)
+
+
+def _apply_salinity_policy(
+    environment: EnvironmentData,
+    has_loaded_context: bool,
+) -> EnvironmentData:
+    """Preserve Mission Builder salinity and keep standalone simulations on standard seawater."""
+    if has_loaded_context:
+        if not environment.salinity_source:
+            environment.salinity_source = "standard_assumption"
+        return environment
+    environment.sea_surface_salinity_psu = None
+    environment.sea_water_density_kg_m3 = None
+    environment.salinity_source = "standard_assumption"
+    environment.salinity_error = None
+    environment.salinity_query_params = {"source": "standard_assumption", "note": "salinity not applied"}
+    return environment
+
+
 def run_from_ui(
     platform_name: str,
     mission_type: str,
@@ -395,6 +432,12 @@ def run_from_ui(
     current_direction_deg: float,
     temp_mean_c: float,
     context: dict[str, Any],
+    battery_condition: str = "Medium",
+    operations_per_week: float = 1.0,
+    planning_duration: str = "1 week",
+    generator_efficiency: float = 0.84,
+    payload_weight_kg: float = 0.0,
+    sustainment_projection_enabled: bool = False,
 ) -> tuple[Any, ...]:
     """Run the simulation and return all Gradio result outputs."""
     try:
@@ -428,8 +471,14 @@ def run_from_ui(
         temp_mean_c,
         context,
     )
+    environment = _apply_salinity_policy(environment, bool(context))
     vehicle = VEHICLE_CATALOG[platform_name]
     effective_mission_sequences = 1 if mission_type in ISR_MISSIONS else max(1, safe_int(mission_sequences, 1))
+    effective_operations_per_week = safe_float(operations_per_week, 1.0) or 1.0
+    effective_planning_duration = str(planning_duration or "1 week")
+    if not sustainment_projection_enabled:
+        effective_operations_per_week = 1.0
+        effective_planning_duration = "1 week"
     simulation_area = area.aggregate_area() if isinstance(area, MissionAreaSet) and mission_type in SEARCH_MISSIONS else area
     result = run_energy_simulation(
         vehicle=vehicle,
@@ -444,6 +493,13 @@ def run_from_ui(
         recharge_allowed=bool(recharge_allowed),
         mission_sequences=effective_mission_sequences,
         rng_seed=parsed_seed,
+        battery_condition=str(battery_condition).lower(),
+        stochastic_usable_battery_enabled=True,
+        reserve_fraction=0.0,
+        sustainment_missions_per_week=effective_operations_per_week,
+        sustainment_planning_weeks=_planning_weeks(effective_planning_duration),
+        sustainment_generator_efficiency=safe_float(generator_efficiency, 0.84) or 0.84,
+        payload_weight_kg=safe_float(payload_weight_kg, 0.0) or 0.0,
     )
     summary = result.summary
     if isinstance(area, MissionAreaSet) and mission_type in SEARCH_MISSIONS:
@@ -456,7 +512,7 @@ def run_from_ui(
                 "metoc_aggregation_method": "area-centroid vector average",
             }
         )
-    summary["return_to_start"] = bool(return_to_start)
+    summary["return_to_start"] = summary.get("payload_recovery_mode") == "return_to_start"
     summary["additional_transit_km"] = safe_float(additional_transit_km, 0.0) or 0.0
     status = (
         f"Simulation complete. Conservative mission energy: {float(summary['p95_energy_kwh']):.1f} kWh (P95). "
@@ -464,7 +520,9 @@ def run_from_ui(
     )
     if summary["battery_inventory_sufficient_no_recharge"]:
         status += " Battery inventory is sufficient without recharge."
-    elif recharge_allowed:
+    elif summary.get("vehicle_rechargeable") is False:
+        status += f" Inventory shortfall: {summary['battery_shortfall_p80']} set(s); plan replacement one-way inventory or energy production."
+    elif summary.get("recharge_allowed"):
         status += f" Battery inventory shortfall: {summary['battery_shortfall_p80']} set(s); recharge/swap sequence required."
     else:
         status += f" Battery inventory shortfall: {summary['battery_shortfall_p80']} set(s); recharge is not enabled."
@@ -475,6 +533,7 @@ def run_from_ui(
             f" Estimated ISR endurance: {float(summary.get('isr_total_inventory_endurance_hr', 0)):.1f} hr using available inventory; "
             f"completed patrol loops using inventory: {summary.get('isr_completed_loops_total_inventory', 0)}."
         )
+    status += " Go to Results tab. Your simulation is ready."
 
     simulation_inputs = {
         "additional_transit_km": safe_float(additional_transit_km, 0.0) or 0.0,
@@ -489,9 +548,19 @@ def run_from_ui(
         "manual_current_speed_kts": safe_float(current_mean_kts),
         "manual_current_direction_deg": safe_float(current_direction_deg),
         "manual_sea_surface_temp_c": safe_float(temp_mean_c),
+        "battery_condition": str(battery_condition).lower(),
+        "payload_weight_kg": safe_float(payload_weight_kg, 0.0) or 0.0,
+        "sustainment_projection_enabled": bool(sustainment_projection_enabled),
+        "operations_per_week": effective_operations_per_week,
+        "planning_duration": effective_planning_duration,
+        "generator_efficiency": safe_float(generator_efficiency, 0.84) or 0.84,
     }
+    summary["sustainment_projection_enabled"] = bool(sustainment_projection_enabled)
     energy_summary_html = build_report_table_html(build_energy_summary_rows(summary), "Energy Summary")
-    battery_sustainment_html = build_report_table_html(build_battery_sustainment_rows(summary), "Battery and Sustainment Summary")
+    battery_sustainment_html = (
+        build_report_table_html(build_battery_sustainment_rows(summary), "Battery and Sustainment Summary")
+        + build_report_table_html(build_sustainment_projection_rows(summary), "Sustainment Projection Lens")
+    )
     mission_geometry_html = build_report_table_html(
         build_mission_geometry_summary_rows(summary, area, environment, simulation_inputs),
         "Mission Geometry Summary",
@@ -607,6 +676,7 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                     mission_type_sim = gr.Dropdown(MISSION_TYPES, value="ISR", label="Mission type")
                     speed_kts = gr.Number(label="Vehicle speed through water, kts", value=speed_default)
                     battery_sets_available = gr.Number(label="Battery sets on hand", value=1, precision=0)
+                    battery_condition = gr.Dropdown(["Low", "Medium", "High"], value="Medium", label="Battery condition / starting efficiency")
                     recharge_allowed = gr.Checkbox(label="Recharge / battery swap allowed if required", value=True)
                     mission_sequences = gr.Number(label="Mission sequences (payload/search only)", value=1, precision=0, visible=False)
                     rng_seed = gr.Textbox(label="Monte Carlo random seed, optional", placeholder="Leave blank to generate and record a seed")
@@ -633,8 +703,17 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                         gr.Markdown("### Payload Delivery Inputs")
                         route_distance_km = gr.Number(label="Route distance, km", value=10)
                         route_heading_deg = gr.Number(label="Route heading, deg", value=0)
+                        payload_weight = gr.Number(label="Payload weight, kg", value=0)
+                        gr.Markdown("Optional payload mass carried by the UUV. Used as a small trim/integration planning burden. Leave 0 if unknown.")
                         return_to_start = gr.Checkbox(label="Vehicle returns to start after delivery", value=True)
                     additional_transit_km = gr.Number(label="Additional transit distance, km", value=0)
+                    sustainment_projection_enabled = gr.Checkbox(label="Mission sustainment projection lens", value=False)
+                    sustainment_projection_group = gr.Group(visible=False)
+                    with sustainment_projection_group:
+                        gr.Markdown("### Sustainment Projection")
+                        operations_per_week = gr.Number(label="Operations per week", value=1)
+                        planning_duration = gr.Dropdown(["1 week", "1 month", "3 months"], value="1 week", label="Planning duration")
+                        generator_efficiency = gr.Number(label="Generator efficiency", value=0.84)
                     run_btn = gr.Button("Run UUV Energy Simulation", variant="primary")
                     run_status = gr.Textbox(label="Run Status", lines=4, interactive=False)
                     view_results_button = gr.HTML(DEFAULT_RESULTS_BUTTON_HTML)
@@ -671,6 +750,7 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
         refresh_map_btn.click(refresh_map, inputs=[region_select], outputs=[map_html])
         mission_type_builder.change(mission_builder_visibility, inputs=[mission_type_builder], outputs=[search_note, payload_note])
         mission_type_sim.change(mission_input_visibility, inputs=[mission_type_sim], outputs=[search_group, payload_group, isr_group, mission_sequences])
+        sustainment_projection_enabled.change(sustainment_projection_visibility, inputs=[sustainment_projection_enabled], outputs=[sustainment_projection_group])
         platform_select.change(platform_defaults, inputs=[platform_select], outputs=[speed_kts, platform_info])
         build_fetch_btn.click(
             build_mission_and_prefill,
@@ -744,6 +824,12 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                 current_dir,
                 temp_mean,
                 mission_context_state,
+                battery_condition,
+                operations_per_week,
+                planning_duration,
+                generator_efficiency,
+                payload_weight,
+                sustainment_projection_enabled,
             ],
             outputs=[
                 run_status,

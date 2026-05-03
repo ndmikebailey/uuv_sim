@@ -92,7 +92,7 @@ The assumptions are traceable in `core/assumptions.py`:
 - `default_hotel_load_fraction`
 - `propulsion_speed_exponent`
 
-Current implementation detail: the active default hotel fraction is `0.35`, with `0.65` of baseline power treated as propulsion at nominal speed. The project notes include a 20/80 hotel/propulsion option, but that option has not replaced the current code default.
+Current implementation detail: the default hotel fraction is `0.35`, with `0.65` of baseline power treated as propulsion at nominal speed. Vehicle catalog entries may optionally provide `hotel_fraction`; when present, the catalog value overrides the default and is clamped to 0.05-0.85. The project notes include a 20/80 hotel/propulsion option, but that option has not replaced the default for entries without a catalog override.
 
 The project-note hydrodynamic cylinder equations are methodology cross-check equations, not active simulation equations. The implementation remains a weighted operational planning model.
 
@@ -109,27 +109,48 @@ Multi-area Search/MCM uses one METOC lookup per area centroid. Current is vector
 
 Scalar environmental values such as sea surface temperature and wind speed are averaged normally.
 
-Salinity is carried as `sea_surface_salinity_psu` when available from manual input, future API support, or a supplied payload. Open-Meteo Marine currently rejects `sea_surface_salinity`, so the live request omits that variable and records the omission in query traceability. Salinity is displayed and exported for traceability, and multi-area salinity is scalar-averaged when present. When salinity is present and deviates from 35 PSU, the model applies a bounded salinity/buoyancy planning uplift. Missing salinity and 35 PSU preserve existing energy behavior.
+Salinity is carried as `sea_surface_salinity_psu` when available from Copernicus Marine or a loaded mission context. Open-Meteo Marine currently rejects `sea_surface_salinity`, so the live request omits that variable and records the omission in query traceability. Standalone/manual simulations use the standard seawater assumption and do not call Copernicus. Mission Builder/GPS geometry attempts Copernicus salinity/density automatically, with Open-Meteo remaining primary for current, SST, wind, and weather. Salinity is displayed for traceability, and multi-area salinity/density are scalar-averaged when present. When salinity is present and deviates from 35 PSU, the model applies a bounded salinity/buoyancy planning uplift. Missing salinity and 35 PSU preserve existing energy behavior.
+
+Copernicus Marine is available as an optional salinity/density provider path. The provider does not hardcode credentials and does not make the app depend on the Copernicus toolbox. When unavailable, it returns a structured salinity error and the mission continues with the standard seawater assumption. Live credentialed validation is pending.
+
+## Payload Mass Burden
+
+Payload Delivery supports an optional payload weight input. The empirical planning multiplier is:
+
+```text
+penalty_pct = (payload_weight_kg / vehicle_energy_kwh) * 0.30
+weight_penalty_multiplier = 1.0 + min(5.0, max(0.0, penalty_pct)) / 100.0
+```
+
+The multiplier applies to outbound propulsion power only, not fixed hotel load. Payload burden does not rely on public dry-weight data; payload mass is treated as a bounded trim/integration planning penalty scaled against vehicle energy class because payload weight alone is not a direct hydrodynamic drag variable. Payload-specific drag modeling is future work if area, Cd, mounting, buoyancy, and trim data become available. For return-to-start payload missions, outbound and added transit burden carry the payload while the return leg is unburdened. One-way mode uses outbound route energy only. Search/MCM and ISR ignore payload weight.
+
+Recoverable payload missions include a small launch/recovery overhead using `0.25 hr * 0.5 * average_power_kw`. One-way/non-recoverable catalog entries do not receive that overhead and use clean one-way/non-rechargeable report wording. Sprint/hibernate/deploy payload phasing remains deferred.
 
 ## Battery Inventory And Reserve Logic
 
 Vehicle usable energy is currently:
 
-`usable_battery_per_set_kwh = battery_kwh * usable_fraction`
+`usable_battery_per_set_kwh = battery_kwh * sampled_usable_fraction * temperature_capacity_factor * (1 - operator_reserve_fraction)`
 
-The active public baseline generally uses an 88 percent usable fraction as a planning reserve and battery-health allowance. This is an assumption, not a measured platform-specific value for every vehicle.
+The active public baseline generally centers on an 88 percent usable fraction. The Monte Carlo now samples practical battery condition separately from operator reserve margin. Battery condition captures starting state, field use, and battery-health uncertainty. Operator reserve remains a separate factor and is not used to hide battery health variation.
+
+Temperature derating uses the named `lithium_temperature_capacity_derating_v1` curve. Temperature reduces available battery capacity and is not also applied as a mission energy demand uplift. Current, speed-power, and salinity affect energy demand.
 
 Battery inventory is represented by the number of battery sets available. For ISR, reporting separates one installed set from total available inventory. For Payload and Search/MCM, reports focus on mission-total energy, battery sets required, and shortfall.
 
 ## Monte Carlo Uncertainty Interpretation
 
-The model samples current and temperature around the selected or loaded environmental means. Output percentiles are:
+The model samples current, temperature capacity factor, and usable battery fraction around selected or loaded planning assumptions. Output percentiles are:
 
 - P50: expected estimate
 - P80: planning-level estimate
 - P95: conservative estimate
 
 The uncertainty distribution is a planning lens. It does not represent a fully validated probabilistic ocean model.
+
+## Sustainment Projection Lens
+
+The Sustainment Projection Lens is an energy-flow planning lens, not a fleet optimizer. By default, simulator runs report a single-mission case over a one-week timeframe. Operators can enable the optional Mission sustainment projection lens to edit tempo, horizon, and generator efficiency. The report projects conservative mission energy over the selected planning horizon and reports total energy demand, available inventory energy per cycle, approximate full inventory recharge cycles, recharge energy required, and generator input energy at the selected efficiency.
 
 ## Planning Basis Definitions
 
@@ -149,12 +170,9 @@ The uncertainty distribution is a planning lens. It does not represent a fully v
 
 - See `docs/implementation_kanban.md` for the current implementation-only development board.
 - See `docs/current_logic_and_equations.md` for the compact equation and current-logic reference.
-- Add stochastic usable battery fraction model.
-- Refine temperature derating with literature or test data.
 - Add payload weight input and mass penalty multiplier.
 - Add optional launch/recovery energy tax for recoverable missions.
 - Add hibernate/sprint phase logic for payload missions that require long loiter periods.
-- Add Sustainment Projection Lens UI using existing backend helpers.
 - Improve per-area Search/MCM lane rendering instead of aggregate equivalent area only.
 - Add contested-delay/loiter interruption model.
 - Expand thesis documentation with assumption provenance, validation scenarios, and sensitivity analysis.

@@ -5,7 +5,12 @@ from __future__ import annotations
 import unittest
 
 from core.assumptions import MODEL_ASSUMPTIONS, assumptions_as_rows
-from core.energy import compute_stockpile_requirement, run_energy_simulation
+from core.energy import (
+    compute_stockpile_requirement,
+    estimate_power_at_speed_kw,
+    payload_weight_energy_multiplier,
+    run_energy_simulation,
+)
 from core.geometry import manual_payload_route, manual_rectangle_area
 from models.environment_model import EnvironmentData
 from models.vehicle_model import VEHICLE_CATALOG
@@ -165,6 +170,7 @@ class ModelReasonablenessTests(unittest.TestCase):
         self.assertIn("propulsion_speed_exponent", MODEL_ASSUMPTIONS)
         self.assertIn("default_usable_battery_fraction", MODEL_ASSUMPTIONS)
         self.assertIn("salinity_buoyancy_penalty_curve", MODEL_ASSUMPTIONS)
+        self.assertIn("temperature_derating_curve_v1", MODEL_ASSUMPTIONS)
         self.assertGreater(len(assumptions_as_rows()), 0)
 
     def test_missing_salinity_preserves_current_payload_energy(self) -> None:
@@ -236,6 +242,187 @@ class ModelReasonablenessTests(unittest.TestCase):
 
         self.assertAlmostEqual(float(result.summary["salinity_uplift_pct"]), 2.0)
         self.assertGreater(float(result.summary["p50_energy_kwh"]), baseline)
+
+    def test_payload_weight_increases_payload_energy(self) -> None:
+        """Payload mass penalty should affect Payload Delivery energy modestly."""
+        baseline = run_energy_simulation(
+            vehicle=self.vehicle,
+            mission_type="Payload Delivery",
+            area=manual_payload_route(20.0, 90.0),
+            environment=self.environment,
+            additional_transit_km=0.0,
+            track_spacing_m=200.0,
+            return_to_start=True,
+            speed_kts=3.0,
+            battery_sets_available=10,
+            recharge_allowed=True,
+            mission_sequences=1,
+            rng_seed=50,
+            monte_carlo_runs=8,
+            payload_weight_kg=0.0,
+        )
+        weighted = run_energy_simulation(
+            vehicle=self.vehicle,
+            mission_type="Payload Delivery",
+            area=manual_payload_route(20.0, 90.0),
+            environment=self.environment,
+            additional_transit_km=0.0,
+            track_spacing_m=200.0,
+            return_to_start=True,
+            speed_kts=3.0,
+            battery_sets_available=10,
+            recharge_allowed=True,
+            mission_sequences=1,
+            rng_seed=50,
+            monte_carlo_runs=8,
+            payload_weight_kg=50.0,
+        )
+
+        self.assertGreater(float(weighted.summary["p50_energy_kwh"]), float(baseline.summary["p50_energy_kwh"]))
+        self.assertLess(
+            float(weighted.summary["p50_energy_kwh"]) / float(baseline.summary["p50_energy_kwh"]),
+            1.05,
+        )
+        self.assertEqual(float(baseline.summary["payload_weight_multiplier"]), 1.0)
+        self.assertGreater(float(weighted.summary["payload_weight_multiplier"]), 1.0)
+        self.assertEqual(str(weighted.summary["payload_weight_penalty_basis"]), "energy_class_scaled")
+        self.assertNotIn("dry", str(weighted.summary).lower())
+
+    def test_payload_weight_energy_multiplier_is_bounded(self) -> None:
+        """Payload penalty should scale by energy class and cap at the configured bound."""
+        self.assertEqual(payload_weight_energy_multiplier(0.0, 3.0), 1.0)
+        self.assertEqual(payload_weight_energy_multiplier(10.0, 0.0), 1.0)
+        self.assertAlmostEqual(payload_weight_energy_multiplier(10.0, 3.0), 1.01)
+        self.assertAlmostEqual(payload_weight_energy_multiplier(10.0, 0.8), 1.0375)
+        self.assertAlmostEqual(payload_weight_energy_multiplier(1000.0, 3.0), 1.05)
+
+    def test_one_way_payload_mode_uses_outbound_distance_only(self) -> None:
+        """Return-to-start should model greater distance than one-way payload mode."""
+        common = {
+            "vehicle": self.vehicle,
+            "mission_type": "Payload Delivery",
+            "area": manual_payload_route(20.0, 90.0),
+            "environment": self.environment,
+            "additional_transit_km": 2.0,
+            "track_spacing_m": 200.0,
+            "speed_kts": 3.0,
+            "battery_sets_available": 10,
+            "recharge_allowed": True,
+            "mission_sequences": 1,
+            "rng_seed": 52,
+            "monte_carlo_runs": 8,
+        }
+        one_way = run_energy_simulation(return_to_start=False, **common)
+        return_trip = run_energy_simulation(return_to_start=True, **common)
+        self.assertEqual(one_way.summary["payload_recovery_mode"], "one_way")
+        self.assertEqual(float(one_way.summary["payload_total_modeled_distance_km"]), 22.0)
+        self.assertEqual(float(return_trip.summary["payload_total_modeled_distance_km"]), 42.0)
+        self.assertGreater(float(return_trip.summary["p50_energy_kwh"]), float(one_way.summary["p50_energy_kwh"]))
+
+    def test_non_rechargeable_payload_uses_clean_one_way_logic(self) -> None:
+        """Non-rechargeable one-way catalog entries should not get recovery overhead."""
+        result = run_energy_simulation(
+            vehicle=VEHICLE_CATALOG["AN/AQS-23 Barracuda"],
+            mission_type="Payload Delivery",
+            area=manual_payload_route(10.0, 90.0),
+            environment=self.environment,
+            additional_transit_km=0.0,
+            track_spacing_m=200.0,
+            return_to_start=True,
+            speed_kts=4.0,
+            battery_sets_available=1,
+            recharge_allowed=True,
+            mission_sequences=1,
+            rng_seed=53,
+            monte_carlo_runs=8,
+        )
+        self.assertEqual(result.summary["payload_recovery_mode"], "one_way")
+        self.assertFalse(result.summary["vehicle_rechargeable"])
+        self.assertEqual(float(result.summary["launch_recovery_energy_kwh"]), 0.0)
+        self.assertIn("one-way/non-rechargeable", str(result.summary["payload_one_way_catalog_note"]))
+
+    def test_recoverable_payload_adds_launch_recovery_overhead(self) -> None:
+        """Recoverable payload missions should include a small launch/recovery overhead."""
+        result = run_energy_simulation(
+            vehicle=self.vehicle,
+            mission_type="Payload Delivery",
+            area=manual_payload_route(10.0, 90.0),
+            environment=self.environment,
+            additional_transit_km=0.0,
+            track_spacing_m=200.0,
+            return_to_start=False,
+            speed_kts=3.0,
+            battery_sets_available=10,
+            recharge_allowed=True,
+            mission_sequences=1,
+            rng_seed=54,
+            monte_carlo_runs=8,
+        )
+        self.assertGreater(float(result.summary["launch_recovery_energy_kwh"]), 0.0)
+        self.assertGreater(float(result.summary["launch_recovery_overhead_hr"]), 0.0)
+
+    def test_vehicle_specific_hotel_fraction_overrides_default(self) -> None:
+        """Catalog hotel fraction should affect speed-power when present and fall back otherwise."""
+        default_vehicle = VEHICLE_CATALOG["REMUS 300 - 4.5 kWh"]
+        high_hotel_vehicle = VEHICLE_CATALOG["Viperfish (Deep Water MCM)"]
+        default_power = estimate_power_at_speed_kw(default_vehicle, 4.0)
+        explicit_default_power = estimate_power_at_speed_kw(default_vehicle, 4.0, hotel_fraction=0.35)
+        self.assertAlmostEqual(default_power, explicit_default_power)
+        catalog_power = estimate_power_at_speed_kw(high_hotel_vehicle, 4.0)
+        forced_default_power = estimate_power_at_speed_kw(high_hotel_vehicle, 4.0, hotel_fraction=0.35)
+        self.assertNotEqual(catalog_power, forced_default_power)
+
+    def test_payload_weight_does_not_change_search_or_isr_energy(self) -> None:
+        """Payload mass burden should not leak into ISR or Search/MCM."""
+        search_common = {
+            "vehicle": self.vehicle,
+            "mission_type": "Area Search / MCM",
+            "area": manual_rectangle_area(3.0, 3.0, 9.0),
+            "environment": self.environment,
+            "additional_transit_km": 0.0,
+            "track_spacing_m": 200.0,
+            "return_to_start": False,
+            "speed_kts": 3.0,
+            "battery_sets_available": 10,
+            "recharge_allowed": True,
+            "mission_sequences": 1,
+            "rng_seed": 51,
+            "monte_carlo_runs": 8,
+        }
+        search_a = run_energy_simulation(payload_weight_kg=0.0, **search_common)
+        search_b = run_energy_simulation(payload_weight_kg=100.0, **search_common)
+        self.assertEqual(search_a.energy_samples_kwh.tolist(), search_b.energy_samples_kwh.tolist())
+
+        isr_common = {**search_common, "mission_type": "ISR"}
+        isr_a = run_energy_simulation(payload_weight_kg=0.0, **isr_common)
+        isr_b = run_energy_simulation(payload_weight_kg=100.0, **isr_common)
+        self.assertEqual(isr_a.energy_samples_kwh.tolist(), isr_b.energy_samples_kwh.tolist())
+
+    def test_summary_includes_battery_and_temperature_fields(self) -> None:
+        """Monte Carlo summary should expose battery fraction and temperature derating fields."""
+        result = run_energy_simulation(
+            vehicle=self.vehicle,
+            mission_type="Payload Delivery",
+            area=manual_payload_route(20.0, 90.0),
+            environment=EnvironmentData(current_speed_kts_mean=0.0, current_direction_deg_mean=0.0, sea_surface_temp_c_mean=-5.0),
+            additional_transit_km=0.0,
+            track_spacing_m=200.0,
+            return_to_start=False,
+            speed_kts=3.0,
+            battery_sets_available=2,
+            recharge_allowed=True,
+            mission_sequences=1,
+            rng_seed=49,
+            monte_carlo_runs=8,
+            battery_condition="low",
+        )
+        summary = result.summary
+        self.assertEqual(summary["battery_condition_assumption"], "low")
+        self.assertIn("battery_usable_fraction_p10", summary)
+        self.assertIn("battery_usable_fraction_p50", summary)
+        self.assertIn("battery_usable_fraction_p90", summary)
+        self.assertGreater(float(summary["temperature_derating_pct"]), 0.0)
+        self.assertEqual(summary["temperature_derating_basis"], "lithium_temperature_capacity_derating_v1")
 
     def test_planning_basis_fields_are_mode_specific(self) -> None:
         payload = self._payload_result().summary

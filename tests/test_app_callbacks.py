@@ -343,15 +343,27 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertNotIn("Recommended track orientation", str(payload_run[0]))
         self.assertIn("view-results-btn active", str(payload_run[1]))
         self.assertIn("Energy Planner Summary", str(payload_run[11]))
+        self.assertIn("Energy Summary", str(payload_run[2]))
+        self.assertIn("Battery and Sustainment Summary", str(payload_run[3]))
+        self.assertIn("Sustainment Projection Lens", str(payload_run[3]))
+        self.assertIn("Single mission default", str(payload_run[3]))
+        self.assertIn("Mission Geometry Summary", str(payload_run[4]))
+        self.assertIn("Environmental Inputs", str(payload_run[5]))
+        self.assertIn("METOC Assessment", str(payload_run[13]))
+        self.assertIn("Energy Storage Equivalence Lens", str(payload_run[12]))
         self.assertIn("Payload mission planning", str(payload_run[11]))
         self.assertIn("Conservative planning energy", str(payload_run[11]))
         self.assertIn("Conservative energy margin", str(payload_run[11]))
+        self.assertNotIn("dry-weight", str(payload_run[4]).lower())
+        self.assertNotIn("dry weight", str(payload_run[4]).lower())
         self.assertIn("Kilocalories", str(payload_run[12]))
         self.assertIn("Gigajoules", str(payload_run[12]))
         self.assertNotIn("0.0 GJ", str(payload_run[12]))
         self.assertEqual(payload_run[8]["visible"], True)
         self.assertIsNotNone(payload_run[8]["value"])
         self.assertEqual(payload_run[9]["visible"], False)
+        self.assertEqual(payload_run[10]["sustainment_planning_weeks"], 1.0)
+        self.assertEqual(payload_run[10]["sustainment_total_missions"], 1.0)
 
         isr_line = main.build_mission_and_prefill("ISR", json.dumps(LINE_GEOMETRY))
         self.assertTrue(isr_line[0], isr_line[1])
@@ -391,7 +403,10 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertIn("window.goToSimulatorTab = function goToSimulatorTab()", main.CUSTOM_JS)
         self.assertIn("Load Mission and Go to Simulator", Path("app/main.py").read_text(encoding="utf-8"))
         self.assertIn("BUILD_MISSION_AND_GO_JS", Path("app/main.py").read_text(encoding="utf-8"))
+        self.assertIn("Now that mission parameters are set, go to UUV simulation.", Path("app/main.py").read_text(encoding="utf-8"))
+        self.assertIn("Go to Results tab. Your simulation is ready.", main.ACTIVE_RESULTS_BUTTON_HTML)
         self.assertNotIn("Energy Planner CSV Export", Path("app/main.py").read_text(encoding="utf-8"))
+        self.assertNotIn("Manual salinity", Path("app/main.py").read_text(encoding="utf-8"))
 
     def test_loaded_mission_text_is_mode_specific(self) -> None:
         """Loaded mission text should avoid payload/ISR centroid and search leakage."""
@@ -400,6 +415,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertIn("Mission loaded:** Payload Delivery", payload_text)
         self.assertIn("Geometry:** Route", payload_text)
         self.assertIn("METOC lookup point:** route midpoint", payload_text)
+        self.assertIn("Now that mission parameters are set, go to UUV simulation.", payload_text)
         self.assertNotIn("Centroid", payload_text)
         self.assertNotIn("ISR", payload_text)
 
@@ -441,6 +457,80 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertEqual(isr_update["visible"], False)
         self.assertEqual(sequence_update["visible"], True)
 
+    def test_sustainment_projection_controls_are_optional(self) -> None:
+        """Sustainment projection inputs should stay hidden until requested."""
+        hidden = main.sustainment_projection_visibility(False)
+        shown = main.sustainment_projection_visibility(True)
+        self.assertEqual(hidden["visible"], False)
+        self.assertEqual(shown["visible"], True)
+
+    def test_default_run_reports_single_mission_projection(self) -> None:
+        """Unchecked sustainment lens should force a one-mission, one-week default."""
+        result = main.run_from_ui(
+            "REMUS 300 - 4.5 kWh",
+            "Payload Delivery",
+            10,
+            3,
+            3,
+            10,
+            0,
+            0,
+            200,
+            True,
+            3.5,
+            1,
+            True,
+            1,
+            "12345",
+            0.5,
+            90,
+            25,
+            {},
+            "Medium",
+            5,
+            "1 month",
+            0.84,
+            0,
+        )
+        self.assertIn("Single mission default", str(result[3]))
+        self.assertEqual(result[10]["sustainment_missions_per_week"], 1.0)
+        self.assertEqual(result[10]["sustainment_planning_weeks"], 1.0)
+        self.assertEqual(result[10]["sustainment_total_missions"], 1.0)
+
+    def test_enabled_sustainment_projection_uses_operator_values(self) -> None:
+        """Checked sustainment lens should use the editable projection values."""
+        result = main.run_from_ui(
+            "REMUS 300 - 4.5 kWh",
+            "Payload Delivery",
+            10,
+            3,
+            3,
+            10,
+            0,
+            0,
+            200,
+            True,
+            3.5,
+            1,
+            True,
+            1,
+            "12345",
+            0.5,
+            90,
+            25,
+            {},
+            "Medium",
+            2,
+            "1 month",
+            0.84,
+            0,
+            True,
+        )
+        self.assertIn("Optional mission projection lens", str(result[3]))
+        self.assertEqual(result[10]["sustainment_missions_per_week"], 2.0)
+        self.assertEqual(result[10]["sustainment_planning_weeks"], 4.0)
+        self.assertEqual(result[10]["sustainment_total_missions"], 8.0)
+
     def test_manual_search_area_derives_square_dimensions(self) -> None:
         """No-context manual area should control search dimensions."""
         _, area, _ = main._area_environment_from_state("Area Search / MCM", 50, 3, 3, 10, 0, 0.5, 90, 25, {})
@@ -480,6 +570,37 @@ class AppCallbackSmokeTests(unittest.TestCase):
         )
         self.assertTrue(str(result[0]).startswith("Invalid seed"))
         self.assertIn("view-results-btn disabled", str(result[1]))
+
+    def test_standalone_simulation_uses_standard_salinity_assumption(self) -> None:
+        """Manual standalone simulation should not imply live salinity lookup."""
+        result = main.run_from_ui(
+            "REMUS 300 - 4.5 kWh",
+            "Payload Delivery",
+            10,
+            3,
+            3,
+            10,
+            0,
+            0,
+            200,
+            True,
+            3.5,
+            1,
+            True,
+            1,
+            "12345",
+            0.5,
+            90,
+            25,
+            {},
+            "Medium",
+            1,
+            "1 month",
+            0.84,
+            0,
+        )
+        self.assertIn("standard_assumption", str(result[5]))
+        self.assertIn("standard seawater assumption used", str(result[5]))
 
 
 if __name__ == "__main__":

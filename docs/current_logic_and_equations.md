@@ -26,7 +26,7 @@ Current baseline power is derived from catalog values:
 
 ```text
 average_power_kw = battery_kwh / max(estimated_endurance_hr, 0.1)
-usable_battery_per_set_kwh = battery_kwh * usable_fraction
+usable_battery_per_set_kwh = battery_kwh * sampled_usable_fraction * temperature_capacity_factor * (1 - operator_reserve_fraction)
 total_available_kwh = usable_battery_per_set_kwh * battery_sets_available
 ```
 
@@ -43,14 +43,15 @@ speed_ratio = requested_speed_kts / nominal_speed_kts
 dynamic_power_kw = hotel_kw + propulsion_kw_nominal * speed_ratio^3
 ```
 
-Current defaults:
+Current defaults and overrides:
 
 ```text
 hotel_fraction = 0.35
 speed_exponent = 3.0
+catalog hotel_fraction override: optional, clamped to 0.05-0.85
 ```
 
-The project notes mention a defensible 20/80 hotel/propulsion split. The active code uses 35/65 until a vehicle-specific or thesis-selected value is promoted into configuration.
+The project notes mention a defensible 20/80 hotel/propulsion split. The active code uses 35/65 when the catalog does not provide a vehicle-specific value. Vehicles with heavier sensor/hotel load may provide `hotel_fraction` in `data/vehicle_catalog.json`.
 
 Implemented in `core/energy.py::estimate_power_at_speed_kw`.
 
@@ -69,18 +70,37 @@ Implementation boundary: current app relies on manufacturer or catalog baseline 
 
 ## Temperature Logic
 
-Current temperature penalty:
+Temperature is now modeled as usable battery capacity derating:
 
 ```text
-if temp_c < 15:
-    penalty = min(0.25, (15 - temp_c) * 0.01)
-elif temp_c > 32:
-    penalty = min(0.15, (temp_c - 32) * 0.005)
-else:
-    penalty = 0.0
+temp_c >= 10       -> 1.00
+0 <= temp_c < 10   -> 0.96
+-10 <= temp_c < 0  -> 0.88
+-20 <= temp_c < -10 -> 0.82
+temp_c < -20       -> 0.75
 ```
 
-Implemented in `core/environment.py::temperature_energy_penalty`.
+Implemented in `core/battery.py::lithium_temperature_capacity_factor`.
+
+Temperature is not also applied as a mission-energy demand uplift.
+
+## Battery Condition Sampling
+
+For each Monte Carlo run, usable battery fraction is sampled by battery condition:
+
+```text
+low    = triangular(0.75, 0.82, 0.90)
+medium = triangular(0.80, 0.88, 0.95)
+high   = triangular(0.88, 0.93, 0.98)
+```
+
+Then:
+
+```text
+usable_energy_kwh = rated_capacity_kwh * sampled_usable_fraction * temperature_capacity_factor * (1 - reserve_fraction)
+```
+
+Implemented in `core/battery.py` and integrated in `core/energy.py`.
 
 ## Current Logic
 
@@ -119,10 +139,10 @@ Implemented in `core/environment.py` and `core/energy.py`.
 Payload and ISR use additive planning factors inside one multiplier:
 
 ```text
-environmental_multiplier = 1.0 + temperature_penalty + current_penalty + salinity_penalty
+environmental_multiplier = 1.0 + current_penalty + salinity_penalty
 ```
 
-Search/MCM uses a current duration multiplier plus temperature and salinity energy penalties in the candidate energy calculation.
+Search/MCM uses a current duration multiplier plus salinity energy penalty in the candidate energy calculation. Temperature affects available battery energy.
 
 ## Salinity/Buoyancy Logic
 
@@ -155,7 +175,17 @@ outbound_time_hr = route_leg_time_hr(route_distance, speed, current, route_headi
 return_time_hr = route_leg_time_hr(route_distance, speed, current, reciprocal_heading) if return_to_start else 0
 transit_time_hr = additional_transit_km / max(speed_kts * 1.852, 0.1)
 duration_single_hr = outbound_time_hr + return_time_hr + transit_time_hr
-energy_single_kwh = dynamic_power_kw * duration_single_hr * environmental_multiplier
+
+penalty_pct = (payload_weight_kg / vehicle_energy_kwh) * 0.30
+weight_penalty_multiplier = 1.0 + min(5.0, max(0.0, penalty_pct)) / 100.0
+
+outbound_power_kw = estimate_power_at_speed_kw(..., propulsion_multiplier=weight_penalty_multiplier)
+return_power_kw = estimate_power_at_speed_kw(..., propulsion_multiplier=1.0)
+launch_recovery_energy_kwh = launch_recovery_overhead_hr * launch_recovery_power_kw
+energy_single_kwh = (
+    outbound_power_kw * (outbound_time_hr + transit_time_hr)
+    + return_power_kw * return_time_hr
+) * environmental_multiplier + launch_recovery_energy_kwh
 ```
 
 Route-leg speed over ground is bounded to at least 25 percent of commanded vehicle speed to avoid impossible or singular current cases:
@@ -163,6 +193,8 @@ Route-leg speed over ground is bounded to at least 25 percent of commanded vehic
 ```text
 speed_over_ground = max(vehicle_speed + along_current, vehicle_speed * 0.25)
 ```
+
+The payload multiplier applies to outbound propulsion power only, not fixed hotel load. Search/MCM and ISR ignore payload weight. Payload burden does not rely on public dry-weight data; payload mass is treated as a bounded trim/integration planning penalty scaled against vehicle energy class because payload weight alone is not a direct hydrodynamic drag variable. Payload-specific drag modeling is future work if area, Cd, mounting, buoyancy, and trim data become available. Return-to-start missions include an unburdened return leg after delivery. One-way mode uses outbound route energy only. Recoverable payload missions add a small launch/recovery overhead; one-way/non-recoverable missions do not. Sprint/hibernate/deploy phasing remains future work and is not the same as one-way routing.
 
 Implemented in `core/energy.py`.
 
@@ -182,7 +214,7 @@ distance_km = clipped_track_distance_km + turn_distance_km + additional_transit_
 base_duration_hr = distance_km / max(speed_kts * 1.852, 0.1)
 duration_hr = base_duration_hr * search_current_duration_multiplier
 duration_hr += turns * 0.01
-energy_kwh = dynamic_power_kw * duration_hr * (1 + temperature_penalty + salinity_penalty)
+energy_kwh = dynamic_power_kw * duration_hr * (1 + salinity_penalty)
 ```
 
 The lower-energy orientation is selected for the run.
@@ -228,19 +260,22 @@ This is the active bridge from tactical mission energy to logistics burden.
 
 Implemented in `core/energy.py::run_energy_simulation`.
 
-## Stockpile Helper
+## Sustainment Projection Lens
 
-The backend stockpile helper rolls mission energy into planning-horizon requirements:
+The simplified sustainment lens rolls mission energy into planning-horizon energy-flow requirements. By default, simulator runs report a single-mission case over a one-week timeframe. Operators can enable the optional Mission sustainment projection lens to edit tempo, horizon, and generator efficiency:
 
 ```text
-missions_in_horizon = missions_per_week * planning_horizon_days / 7
-total_mission_energy_kwh = conservative_energy_kwh * missions_in_horizon
-battery_sets_without_recharge = ceil(total_mission_energy_kwh / usable_battery_per_set_kwh)
-generator_input_energy_kwh = total_mission_energy_kwh / generator_efficiency
-fuel_gallons_equivalent = generator_input_energy_kwh / fuel_energy_kwh_per_gal
+total_missions = missions_per_week * planning_weeks
+total_conservative_energy_kwh = planning_energy_kwh * total_missions
+usable_inventory_energy_per_cycle_kwh = usable_battery_per_set_kwh * battery_sets_available
+inventory_cycles_required = ceil(total_conservative_energy_kwh / usable_inventory_energy_per_cycle_kwh)
+generator_input_energy_kwh = total_conservative_energy_kwh / generator_efficiency
+recharge_energy_required_kwh = max(total_conservative_energy_kwh - usable_inventory_energy_per_cycle_kwh, 0)
 ```
 
-Implemented in `core/energy.py::compute_stockpile_requirement`.
+Fuel gallons are not reported unless a cited conversion factor is selected for the project.
+
+Implemented in `core/sustainment.py::compute_sustainment_projection`.
 
 ## METOC Sampling
 
@@ -278,17 +313,30 @@ Current behavior:
 
 - Open-Meteo Marine requests omit `sea_surface_salinity` because the endpoint currently returns HTTP 400 for that variable.
 - API parsing accepts `sea_surface_salinity`, `ocean_salinity`, and `salinity` if they appear in a supplied or future payload.
-- Multi-area Search/MCM averages salinity as a scalar value.
-- Environment table rows and run records preserve salinity when available.
+- Standalone/manual simulation uses the standard seawater assumption and does not call Copernicus.
+- Mission Builder/GPS geometry attempts the optional Copernicus Marine provider path automatically, supplementing salinity and density when configured.
+- Multi-area Search/MCM attempts one salinity/density lookup per area centroid through the fused METOC service and averages salinity/density as scalar values.
+- Environment table rows and internal run records preserve salinity when available.
 - Missing salinity and reference salinity preserve existing energy behavior.
 - Non-reference salinity contributes to `salinity_uplift_pct` and the environmental multiplier.
+
+## Sustainment Projection Output
+
+The simplified sustainment lens computes:
+
+```text
+total_missions = missions_per_week * planning_weeks
+total_conservative_energy_kwh = planning_energy_kwh * total_missions
+usable_inventory_energy_per_cycle_kwh = usable_battery_per_set_kwh * battery_sets_available
+inventory_cycles_required = ceil(total_conservative_energy_kwh / usable_inventory_energy_per_cycle_kwh)
+generator_input_energy_kwh = total_conservative_energy_kwh / generator_efficiency
+recharge_energy_required_kwh = max(total_conservative_energy_kwh - usable_inventory_energy_per_cycle_kwh, 0)
+```
+
+Implemented in `core/sustainment.py`.
 
 ## Not Yet Implemented
 
 The following project-note items are implementation backlog, not current behavior:
 
-- Payload weight input and mass penalty multiplier.
-- Static launch/recovery energy tax.
 - Multi-phase hibernate/sprint payload mission logic.
-- Expendable one-way vehicle report logic for `recharge_hr = 0.0` and `usable_fraction = 1.0`.
-- Vehicle-specific hotel fractions.

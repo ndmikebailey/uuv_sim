@@ -117,11 +117,22 @@ def aggregate_environments(
 
     marine_errors = [env.marine_error for env in environments if env.marine_error]
     weather_errors = [env.weather_error for env in environments if env.weather_error]
+    salinity_errors = [env.salinity_error for env in environments if env.salinity_error]
+    salinity_sources = [env.salinity_source for env in environments if env.salinity_source]
+    salinity_value = scalar("sea_surface_salinity_psu")
+    density_value = scalar("sea_water_density_kg_m3")
+    if salinity_value is not None:
+        salinity_source = "copernicus_marine area-centroid average"
+    elif salinity_sources:
+        salinity_source = salinity_sources[0]
+    else:
+        salinity_source = "standard_assumption"
     return EnvironmentData(
         current_speed_kts_mean=current_speed,
         current_direction_deg_mean=current_direction,
         sea_surface_temp_c_mean=scalar("sea_surface_temp_c_mean"),
-        sea_surface_salinity_psu=scalar("sea_surface_salinity_psu"),
+        sea_surface_salinity_psu=salinity_value,
+        sea_water_density_kg_m3=density_value,
         sea_level_height_m=scalar("sea_level_height_m"),
         wave_height_m=scalar("wave_height_m"),
         wave_direction_deg=scalar("wave_direction_deg"),
@@ -142,6 +153,7 @@ def aggregate_environments(
         weather_summary="Averaged from area centroid lookup points.",
         marine_error="; ".join(marine_errors) or None,
         weather_error="; ".join(weather_errors) or None,
+        salinity_error="; ".join(salinity_errors) or None,
         raw_marine_api_json={
             "aggregation_method": "area-centroid vector average",
             "lookup_points": lookup_points,
@@ -154,6 +166,17 @@ def aggregate_environments(
         },
         marine_query_params={"lookup_points": lookup_points},
         weather_query_params={"lookup_points": lookup_points},
+        salinity_query_params={
+            "lookup_points": lookup_points,
+            "samples": [env.salinity_query_params for env in environments],
+        },
+        salinity_metadata={
+            "aggregation_method": "area-centroid scalar average",
+            "lookup_points": lookup_points,
+            "sample_count": len(environments),
+            "sources": salinity_sources,
+        },
+        salinity_source=salinity_source,
         source="Open-Meteo area-centroid average",
     )
 

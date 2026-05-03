@@ -48,5 +48,6 @@ def salinity_buoyancy_penalty(
 
 
 def environmental_uplift_factor(temp_c: float, current_penalty: float = 0.0, salinity_penalty: float = 0.0) -> float:
-    """Return combined multiplicative uplift for tests and planning calculations."""
-    return 1.0 + temperature_energy_penalty(temp_c) + current_penalty + salinity_penalty
+    """Return demand-side environmental uplift; temperature is handled as capacity derating."""
+    del temp_c
+    return 1.0 + current_penalty + salinity_penalty

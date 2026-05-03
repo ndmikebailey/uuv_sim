@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest.mock import patch
 
 from core.geometry import parse_geometry_json
 from core.mission import aggregate_environments, build_mission_context, choose_environment_lookup_point
 from models.environment_model import EnvironmentData
 from models.mission_model import MissionAreaSet
+from services.metoc_fusion import MetocFusionService
 
 
 LINE_GEOMETRY = {
@@ -73,6 +75,21 @@ class FakeMetocService:
         )
 
 
+class FakeMarineClient:
+    def fetch(self, lat: float, lon: float) -> EnvironmentData:
+        return EnvironmentData(
+            current_speed_kts_mean=0.5,
+            current_direction_deg_mean=0.0,
+            sea_surface_temp_c_mean=25.0,
+            marine_query_params={"latitude": lat, "longitude": lon},
+        )
+
+
+class FakeWeatherClient:
+    def fetch(self, lat: float, lon: float) -> EnvironmentData:
+        return EnvironmentData(weather_query_params={"latitude": lat, "longitude": lon})
+
+
 class MissionLookupTests(unittest.TestCase):
     """Mission-specific environmental lookup behavior."""
 
@@ -125,6 +142,34 @@ class MissionLookupTests(unittest.TestCase):
         self.assertIn("area centroid METOC samples", result.status)
         self.assertEqual(result.context.environment.source, "Open-Meteo area-centroid average")
         self.assertAlmostEqual(float(result.context.environment.sea_surface_salinity_psu or 0.0), 35.0)
+
+    def test_metoc_fusion_attempts_salinity_when_enabled(self) -> None:
+        """Mission Builder service path should supplement Open-Meteo with Copernicus when enabled."""
+        service = MetocFusionService(FakeMarineClient(), FakeWeatherClient(), salinity_enabled=True)
+        with patch("services.metoc_fusion.get_copernicus_salinity_density") as mocked:
+            mocked.return_value = EnvironmentData(
+                sea_surface_salinity_psu=34.4,
+                sea_water_density_kg_m3=1024.0,
+                salinity_source="copernicus_marine",
+            )
+            result = service.fetch(13.4, 144.8)
+        mocked.assert_called_once()
+        self.assertEqual(result.current_speed_kts_mean, 0.5)
+        self.assertEqual(result.sea_surface_salinity_psu, 34.4)
+        self.assertEqual(result.sea_water_density_kg_m3, 1024.0)
+
+    def test_copernicus_unavailable_does_not_break_fusion(self) -> None:
+        """Copernicus failure should preserve Open-Meteo values and clean fallback status."""
+        service = MetocFusionService(FakeMarineClient(), FakeWeatherClient(), salinity_enabled=True)
+        with patch("services.metoc_fusion.get_copernicus_salinity_density") as mocked:
+            mocked.return_value = EnvironmentData(
+                salinity_source="copernicus_unavailable",
+                salinity_error="Copernicus Marine toolbox is not installed.",
+            )
+            result = service.fetch(13.4, 144.8)
+        self.assertEqual(result.current_speed_kts_mean, 0.5)
+        self.assertIsNone(result.sea_surface_salinity_psu)
+        self.assertEqual(result.salinity_source, "copernicus_unavailable")
 
 
 if __name__ == "__main__":

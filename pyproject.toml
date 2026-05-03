@@ -9,6 +9,7 @@ dependencies = [
   "numpy",
   "pandas",
   "requests",
+  "copernicusmarine",
 ]
 
 [tool.pytest.ini_options]

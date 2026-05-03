@@ -6,7 +6,7 @@ The v3.2 branch should shift the project from UI/report stabilization toward sim
 
 ## Immediate v3.2 priorities
 
-1. Replace placeholder vehicle data with the open-source public vehicle baseline.
+1. Keep the active vehicle catalog aligned with the validated public vehicle baseline.
 2. Add a speed-power relationship so increasing speed increases propulsion energy, not just mission duration.
 3. Add a stockpile/recharge planning lens driven by mission frequency and planning horizon.
 4. Add an optional contested-delay stochastic lens for hover/delay interruptions.
@@ -177,5 +177,5 @@ These tests are not final validation. They prevent obvious model regressions.
 ## 6. Deferred items
 
 - Multi-area Search/MCM geometry support should return, but it is a larger mission-builder feature and should not be mixed with speed-power or stockpile logic.
-- REMUS 600 should be added after a public source file or approved hard-number block is available.
+- REMUS 600/620-derived public-facing entries are now represented through the validated project-note catalog mappings where listed.
 - Battery temperature modeling should remain a generalized penalty until a literature source or SME input is selected.

@@ -9,19 +9,29 @@ from typing import Optional
 
 import numpy as np
 
+from core.battery import (
+    lithium_temperature_capacity_factor,
+    sample_usable_battery_fraction,
+    usable_battery_energy_kwh,
+)
 from core.environment import (
     current_components,
     environmental_uplift_factor,
     payload_current_penalty,
     salinity_buoyancy_penalty,
     search_current_duration_multiplier,
-    temperature_energy_penalty,
 )
+from core.sustainment import compute_sustainment_projection
 from core.geometry import clipped_search_lanes, isr_path_distance_per_loop_km
 from models.environment_model import EnvironmentData
 from models.mission_model import MissionArea
 from models.vehicle_model import VehicleState
-from utils.constants import ISR_MISSIONS, MONTE_CARLO_RUNS, PAYLOAD_MISSIONS, SEARCH_MISSIONS
+from utils.constants import (
+    ISR_MISSIONS,
+    MONTE_CARLO_RUNS,
+    PAYLOAD_MISSIONS,
+    SEARCH_MISSIONS,
+)
 
 
 @dataclass(frozen=True)
@@ -110,18 +120,79 @@ def isr_current_power_penalty(current_speed_kts: float, endurance_speed_kts: flo
 def estimate_power_at_speed_kw(
     vehicle: VehicleState,
     speed_kts: float,
-    hotel_fraction: float = 0.35,
+    hotel_fraction: float | None = None,
     speed_exponent: float = 3.0,
+    propulsion_multiplier: float = 1.0,
 ) -> float:
     """Estimate UUV power draw at requested speed using fixed hotel load plus cubic propulsion scaling."""
     nominal_speed = max(vehicle.nominal_speed_kts, 0.1)
     requested_speed = max(speed_kts, 0.1)
     baseline_power = vehicle.average_power_kw
-    bounded_hotel_fraction = min(max(hotel_fraction, 0.0), 1.0)
+    selected_hotel_fraction = vehicle.hotel_fraction if hotel_fraction is None else hotel_fraction
+    if selected_hotel_fraction is None:
+        selected_hotel_fraction = 0.35
+    bounded_hotel_fraction = min(max(float(selected_hotel_fraction), 0.05), 0.85)
     hotel_kw = baseline_power * bounded_hotel_fraction
     propulsion_kw_nominal = baseline_power * (1.0 - bounded_hotel_fraction)
     speed_ratio = requested_speed / nominal_speed
-    return hotel_kw + propulsion_kw_nominal * (speed_ratio ** speed_exponent)
+    return hotel_kw + propulsion_kw_nominal * (speed_ratio ** speed_exponent) * max(float(propulsion_multiplier), 0.0)
+
+
+def payload_weight_energy_multiplier(
+    payload_weight_kg: float,
+    vehicle_energy_kwh: float,
+    max_penalty_pct: float = 5.0,
+    penalty_per_kg_per_kwh_pct: float = 0.30,
+) -> float:
+    """
+    Convert payload weight into a bounded planning multiplier.
+
+    Payload weight is scaled against vehicle energy class as a small bounded
+    trim/integration planning proxy. It is not a direct drag model.
+    """
+    payload_weight = max(float(payload_weight_kg or 0.0), 0.0)
+    energy_class = max(float(vehicle_energy_kwh or 0.0), 0.0)
+    if payload_weight <= 0 or energy_class <= 0:
+        return 1.0
+    penalty_pct = (payload_weight / energy_class) * max(float(penalty_per_kg_per_kwh_pct), 0.0)
+    bounded_penalty_pct = min(max(float(max_penalty_pct), 0.0), max(penalty_pct, 0.0))
+    return 1.0 + (bounded_penalty_pct / 100.0)
+
+
+def payload_weight_penalty_pct(payload_weight_kg: float, vehicle_energy_kwh: float) -> float:
+    """Return the active payload penalty percentage for reporting."""
+    return (payload_weight_energy_multiplier(payload_weight_kg, vehicle_energy_kwh) - 1.0) * 100.0
+
+
+def payload_recovery_mode(vehicle: VehicleState, return_to_start: bool) -> str:
+    """Resolve payload recovery mode from vehicle flags and UI return setting."""
+    default_mode = (vehicle.default_payload_recovery_mode or "").strip().lower()
+    if default_mode in {"one_way", "one-way", "no_return"}:
+        return "one_way"
+    if vehicle.recoverable is False or vehicle.rechargeable is False:
+        return "one_way"
+    return "return_to_start" if return_to_start else "one_way"
+
+
+def is_vehicle_recoverable(vehicle: VehicleState) -> bool:
+    """Return whether launch/recovery overhead should apply by default."""
+    return vehicle.recoverable is not False
+
+
+def is_vehicle_rechargeable(vehicle: VehicleState) -> bool:
+    """Return whether recharge wording should apply by default."""
+    if vehicle.rechargeable is not None:
+        return bool(vehicle.rechargeable)
+    return vehicle.recharge_hr > 0
+
+
+def launch_recovery_energy_kwh(vehicle: VehicleState, enabled: bool = True) -> tuple[float, float, float]:
+    """Return launch/recovery energy, duration, and power for recoverable missions."""
+    if not enabled or not is_vehicle_recoverable(vehicle):
+        return 0.0, 0.0, 0.0
+    overhead_hr = 0.25
+    power_kw = max(0.5 * vehicle.average_power_kw, 0.0)
+    return overhead_hr * power_kw, overhead_hr, power_kw
 
 
 def compute_stockpile_requirement(
@@ -240,6 +311,13 @@ def run_energy_simulation(
     mission_sequences: int,
     rng_seed: Optional[int] = None,
     monte_carlo_runs: int = MONTE_CARLO_RUNS,
+    battery_condition: str = "medium",
+    stochastic_usable_battery_enabled: bool = True,
+    reserve_fraction: float = 0.0,
+    sustainment_missions_per_week: float = 1.0,
+    sustainment_planning_weeks: float = 4.0,
+    sustainment_generator_efficiency: float = 0.84,
+    payload_weight_kg: float = 0.0,
 ) -> SimulationResult:
     """Run the single-UUV Monte Carlo mission energy model."""
     environment = environment or EnvironmentData()
@@ -254,11 +332,40 @@ def run_energy_simulation(
     current_dir = float(environment.current_direction_deg_mean if environment.current_direction_deg_mean is not None else 0.0)
     temp_mean = float(environment.sea_surface_temp_c_mean if environment.sea_surface_temp_c_mean is not None else 25.0)
     salinity_penalty = salinity_buoyancy_penalty(environment.sea_surface_salinity_psu)
+    payload_propulsion_multiplier = payload_weight_energy_multiplier(payload_weight_kg, vehicle.battery_kwh)
+    payload_penalty_pct = payload_weight_penalty_pct(payload_weight_kg, vehicle.battery_kwh)
+    payload_weight_basis = "energy_class_scaled" if max(float(payload_weight_kg or 0.0), 0.0) > 0 else "No payload carriage penalty applied."
+    recovery_mode = payload_recovery_mode(vehicle, bool(return_to_start))
+    payload_returns_to_start = recovery_mode == "return_to_start"
+    launch_recovery_energy, launch_recovery_overhead_hr, launch_recovery_power_kw = launch_recovery_energy_kwh(vehicle)
     current_sigma_kts = max(0.10, 0.25 * max(current_mean, 0.1))
     sampled_current = np.clip(rng.normal(current_mean, current_sigma_kts, n), 0, None)
     sampled_temp = rng.normal(temp_mean, 1.5, n)
+    sampled_temperature_capacity_factor = np.array([lithium_temperature_capacity_factor(float(temp)) for temp in sampled_temp])
+    sampled_battery_fraction = np.array(
+        [
+            sample_usable_battery_fraction(
+                rng,
+                condition=battery_condition,
+                deterministic_fraction=vehicle.usable_fraction,
+                stochastic_enabled=stochastic_usable_battery_enabled,
+            )
+            for _ in range(n)
+        ]
+    )
+    sampled_usable_battery_per_set = np.array(
+        [
+            usable_battery_energy_kwh(
+                vehicle.battery_kwh,
+                usable_fraction=fraction,
+                reserve_fraction=reserve_fraction,
+                temperature_capacity_factor=temp_factor,
+            )
+            for fraction, temp_factor in zip(sampled_battery_fraction, sampled_temperature_capacity_factor)
+        ]
+    )
 
-    usable_battery_per_set = vehicle.usable_battery_per_set_kwh
+    usable_battery_per_set = float(np.percentile(sampled_usable_battery_per_set, 50))
     total_available_kwh = usable_battery_per_set * max(1, battery_sets_available)
     energies: list[float] = []
     durations: list[float] = []
@@ -276,20 +383,24 @@ def run_energy_simulation(
     for index in range(n):
         cur = float(sampled_current[index])
         temp = float(sampled_temp[index])
-        temp_penalty = temperature_energy_penalty(temp)
+        usable_battery_sample = float(sampled_usable_battery_per_set[index])
 
         if mission_type in PAYLOAD_MISSIONS:
             route_distance = float(area.route_distance_km or 10.0)
             route_heading = float(area.route_heading_deg or 0.0)
             outbound_time = route_leg_time_hr(route_distance, speed_kts, cur, current_dir, route_heading)
             return_time = 0.0
-            if return_to_start:
+            if payload_returns_to_start:
                 return_time = route_leg_time_hr(route_distance, speed_kts, cur, current_dir, (route_heading + 180) % 360)
             transit_time = additional_transit_km / max(speed_kts * 1.852, 0.1)
-            duration_single = outbound_time + return_time + transit_time
+            duration_single = outbound_time + return_time + transit_time + launch_recovery_overhead_hr
             current_penalty = payload_current_penalty(cur, current_dir, route_heading, speed_kts)
-            requested_power_kw = estimate_power_at_speed_kw(vehicle, speed_kts)
-            energy_single = requested_power_kw * duration_single * environmental_uplift_factor(temp, current_penalty, salinity_penalty)
+            outbound_power_kw = estimate_power_at_speed_kw(vehicle, speed_kts, propulsion_multiplier=payload_propulsion_multiplier)
+            return_power_kw = estimate_power_at_speed_kw(vehicle, speed_kts)
+            environmental_multiplier = environmental_uplift_factor(temp, current_penalty, salinity_penalty)
+            energy_single = (
+                ((outbound_power_kw * (outbound_time + transit_time)) + (return_power_kw * return_time)) * environmental_multiplier
+            ) + launch_recovery_energy
         elif mission_type in ISR_MISSIONS:
             endurance_speed_kts = max(float(speed_kts or vehicle.nominal_speed_kts), 0.1)
             current_penalty = isr_current_power_penalty(cur, endurance_speed_kts)
@@ -297,7 +408,7 @@ def run_energy_simulation(
             endurance_power_kw = estimate_power_at_speed_kw(vehicle, endurance_speed_kts)
             persistence = compute_isr_persistence(
                 loop_distance_km=isr_loop_distance_km,
-                usable_energy_kwh=usable_battery_per_set,
+                usable_energy_kwh=usable_battery_sample,
                 reserve_fraction=0.0,
                 endurance_speed_kts=endurance_speed_kts,
                 endurance_power_kw=endurance_power_kw,
@@ -314,7 +425,7 @@ def run_energy_simulation(
                 duration_candidate = base_duration * search_current_duration_multiplier(cur, current_dir, option.track_heading_deg, speed_kts)
                 duration_candidate += option.turns * 0.01
                 requested_power_kw = estimate_power_at_speed_kw(vehicle, speed_kts)
-                energy_candidate = requested_power_kw * duration_candidate * (1 + temp_penalty + salinity_penalty)
+                energy_candidate = requested_power_kw * duration_candidate * (1 + salinity_penalty)
                 option_results.append((energy_candidate, duration_candidate, option))
 
             best_energy, best_duration, best_option = min(option_results, key=lambda item: item[0])
@@ -332,10 +443,12 @@ def run_energy_simulation(
     p95 = float(np.percentile(energy_arr, 95))
     mean_energy = float(np.mean(energy_arr))
     mean_duration = float(np.mean(duration_arr))
-    inventory_probability = float(np.mean(energy_arr <= total_available_kwh) * 100.0)
+    available_inventory_samples = sampled_usable_battery_per_set * max(1, battery_sets_available)
+    inventory_probability = float(np.mean(energy_arr <= available_inventory_samples) * 100.0)
     battery_sets_required_p80 = max(1, math.ceil(p80 / max(usable_battery_per_set, 0.001)))
     battery_shortfall = max(0, battery_sets_required_p80 - max(1, battery_sets_available))
-    recharge_sequences_required = battery_shortfall if recharge_allowed else 0
+    effective_recharge_allowed = bool(recharge_allowed) and is_vehicle_rechargeable(vehicle)
+    recharge_sequences_required = battery_shortfall if effective_recharge_allowed else 0
     recharge_downtime_hr = recharge_sequences_required * vehicle.recharge_hr
     orientation_summary = "N/A"
     if mission_type in SEARCH_MISSIONS and recommended_orientations:
@@ -359,7 +472,8 @@ def run_energy_simulation(
         adjusted_powers = np.array([result.adjusted_power_draw_kw for result in isr_persistence_results])
         env_multipliers = np.array([result.environmental_multiplier for result in isr_persistence_results])
         completed_loops = np.array([result.completed_loops for result in isr_persistence_results])
-        total_inventory_station_times = total_available_kwh / np.maximum(adjusted_powers, 0.001)
+        per_set_energies = np.array([result.available_mission_energy_kwh for result in isr_persistence_results])
+        total_inventory_station_times = (per_set_energies * max(1, battery_sets_available)) / np.maximum(adjusted_powers, 0.001)
         total_inventory_completed_loops = np.array(
             [
                 int(total_time // loop_time) if loop_time > 0 else 0
@@ -407,11 +521,18 @@ def run_energy_simulation(
             "isr_patrol_geometry": area.geometry_type,
         }
 
-    mean_temp_uplift_pct = temperature_energy_penalty(temp_mean) * 100.0
+    mean_temperature_capacity_factor = lithium_temperature_capacity_factor(temp_mean)
+    mean_temperature_derating_pct = (1.0 - mean_temperature_capacity_factor) * 100.0
+    mean_temp_uplift_pct = 0.0
     mean_salinity_uplift_pct = salinity_penalty * 100.0
     mean_current_uplift_pct = 0.0
     mean_environmental_multiplier = 1.0 + (mean_temp_uplift_pct + mean_salinity_uplift_pct) / 100.0
+    payload_total_modeled_distance_km = 0.0
     if mission_type in PAYLOAD_MISSIONS:
+        route_distance_for_summary = float(area.route_distance_km or 10.0)
+        payload_total_modeled_distance_km = (
+            route_distance_for_summary * (2.0 if payload_returns_to_start else 1.0)
+        ) + max(float(additional_transit_km or 0.0), 0.0)
         mean_current_uplift_pct = payload_current_penalty(
             current_mean,
             current_dir,
@@ -449,6 +570,15 @@ def run_energy_simulation(
         planning_duration_basis = "mission_duration"
         planning_duration_hr = mean_duration
 
+    sustainment_projection = compute_sustainment_projection(
+        planning_energy_kwh=planning_energy_kwh,
+        missions_per_week=sustainment_missions_per_week,
+        planning_weeks=sustainment_planning_weeks,
+        usable_battery_per_set_kwh=usable_battery_per_set,
+        battery_sets_available=max(1, battery_sets_available),
+        generator_efficiency=sustainment_generator_efficiency,
+    )
+
     summary = {
         "platform": vehicle.name,
         "mission_type": mission_type,
@@ -469,7 +599,18 @@ def run_energy_simulation(
         "battery_sets_available": max(1, battery_sets_available),
         "battery_shortfall_p80": battery_shortfall,
         "recharge_sequences_required": recharge_sequences_required,
-        "recharge_allowed": bool(recharge_allowed),
+        "recharge_allowed": effective_recharge_allowed,
+        "vehicle_recoverable": is_vehicle_recoverable(vehicle),
+        "vehicle_rechargeable": is_vehicle_rechargeable(vehicle),
+        "payload_recovery_mode": recovery_mode if mission_type in PAYLOAD_MISSIONS else "not_applicable",
+        "payload_one_way_catalog_note": (
+            "Vehicle catalog marks this platform as one-way/non-rechargeable; payload planning uses one-way route energy."
+            if mission_type in PAYLOAD_MISSIONS and recovery_mode == "one_way" and (vehicle.recoverable is False or not is_vehicle_rechargeable(vehicle))
+            else ""
+        ),
+        "launch_recovery_overhead_hr": launch_recovery_overhead_hr if mission_type in PAYLOAD_MISSIONS else 0.0,
+        "launch_recovery_power_kw": launch_recovery_power_kw if mission_type in PAYLOAD_MISSIONS else 0.0,
+        "launch_recovery_energy_kwh": launch_recovery_energy if mission_type in PAYLOAD_MISSIONS else 0.0,
         "recharge_downtime_hr": recharge_downtime_hr,
         "recommended_track_orientation": orientation_summary,
         "monte_carlo_runs": n,
@@ -479,6 +620,16 @@ def run_energy_simulation(
         "usable_fraction": vehicle.usable_fraction,
         "usable_battery_per_set_kwh": usable_battery_per_set,
         "total_available_kwh": total_available_kwh,
+        "usable_battery_variability_enabled": bool(stochastic_usable_battery_enabled),
+        "battery_condition_assumption": str(battery_condition).lower(),
+        "battery_usable_fraction_p10": float(np.percentile(sampled_battery_fraction, 10)),
+        "battery_usable_fraction_p50": float(np.percentile(sampled_battery_fraction, 50)),
+        "battery_usable_fraction_p90": float(np.percentile(sampled_battery_fraction, 90)),
+        "battery_usable_fraction_mean": float(np.mean(sampled_battery_fraction)),
+        "operator_reserve_fraction": max(0.0, min(float(reserve_fraction), 0.95)),
+        "temperature_capacity_factor": mean_temperature_capacity_factor,
+        "temperature_derating_pct": mean_temperature_derating_pct,
+        "temperature_derating_basis": "lithium_temperature_capacity_derating_v1",
         "source_note": vehicle.source_note,
         "usable_basis": vehicle.usable_basis,
         "track_spacing_m": track_spacing_m,
@@ -486,13 +637,21 @@ def run_energy_simulation(
         "search_width_km": area.width_km,
         "search_height_km": area.height_km,
         "route_distance_km": area.route_distance_km,
+        "payload_total_modeled_distance_km": payload_total_modeled_distance_km if mission_type in PAYLOAD_MISSIONS else 0.0,
         "route_heading_deg": area.route_heading_deg,
         "current_uplift_pct": mean_current_uplift_pct,
         "temp_uplift_pct": mean_temp_uplift_pct,
         "salinity_uplift_pct": mean_salinity_uplift_pct,
         "environmental_multiplier": mean_environmental_multiplier,
+        "payload_weight_kg": max(float(payload_weight_kg or 0.0), 0.0),
+        "payload_weight_penalty_pct": payload_penalty_pct if mission_type in PAYLOAD_MISSIONS else 0.0,
+        "payload_weight_multiplier": payload_propulsion_multiplier if mission_type in PAYLOAD_MISSIONS else 1.0,
+        "payload_weight_penalty_multiplier": payload_propulsion_multiplier if mission_type in PAYLOAD_MISSIONS else 1.0,
+        "payload_weight_penalty_basis": payload_weight_basis if mission_type in PAYLOAD_MISSIONS else "Not applicable to this mission type.",
+        "payload_weight_basis": payload_weight_basis if mission_type in PAYLOAD_MISSIONS else "Not applicable to this mission type.",
         "reserve_margin_per_set_kwh": max(vehicle.battery_kwh - usable_battery_per_set, 0.0),
         "battery_remaining_pct_p80": max(0.0, min(100.0, 100.0 * (1.0 - p80 / max(total_available_kwh, 0.001)))),
+        **{f"sustainment_{key}": value for key, value in sustainment_projection.items()},
         **search_summary,
         **isr_summary,
     }
@@ -512,7 +671,14 @@ def run_energy_simulation(
         ("Mean mission duration", mean_duration, "hr"),
         ("Battery nameplate capacity", vehicle.battery_kwh, "kWh"),
         ("Usable planning energy per set", usable_battery_per_set, "kWh"),
+        ("Battery condition assumption", str(battery_condition).lower(), ""),
+        ("Temperature capacity factor", mean_temperature_capacity_factor, ""),
+        ("Operator reserve fraction", reserve_fraction, ""),
         ("Usable battery basis", vehicle.usable_basis, ""),
+        ("Payload weight", max(float(payload_weight_kg or 0.0), 0.0), "kg"),
+        ("Payload carriage penalty", payload_penalty_pct if mission_type in PAYLOAD_MISSIONS else 0.0, "%"),
+        ("Payload propulsion penalty multiplier", payload_propulsion_multiplier if mission_type in PAYLOAD_MISSIONS else 1.0, ""),
+        ("Launch/recovery overhead", launch_recovery_energy if mission_type in PAYLOAD_MISSIONS else 0.0, "kWh"),
         ("Battery sets on hand", battery_sets_available, "sets"),
         ("Battery inventory without recharge", "Sufficient" if battery_shortfall == 0 else "Not sufficient", ""),
         ("Battery inventory sufficiency across Monte Carlo runs", inventory_probability, "%"),

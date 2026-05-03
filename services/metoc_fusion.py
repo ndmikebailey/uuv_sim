@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from models.environment_model import EnvironmentData
+from services.copernicus_api import get_copernicus_salinity_density
 from services.marine_api import OpenMeteoMarineClient
 from services.weather_api import OpenMeteoWeatherClient
 
@@ -51,12 +52,17 @@ class MetocFusionService:
 
     marine_client: OpenMeteoMarineClient
     weather_client: OpenMeteoWeatherClient
+    salinity_enabled: bool = False
 
     def fetch(self, lat: float, lon: float) -> EnvironmentData:
         """Return fused environment values for a mission centroid."""
         marine = self.marine_client.fetch(lat, lon)
         weather = self.weather_client.fetch(lat, lon)
-        return marine.merged(weather)
+        environment = marine.merged(weather)
+        if not self.salinity_enabled:
+            return environment
+        salinity = get_copernicus_salinity_density(lat, lon, enabled=True)
+        return environment.merged(salinity)
 
     def assessment(self, environment: EnvironmentData) -> dict[str, object]:
         """Return the METOC assessment used by the UI report cards."""
@@ -79,4 +85,3 @@ class MetocFusionService:
                 ("Weather", wx_level, wx_color, environment.weather_summary or "N/A", "", "General operating conditions."),
             ],
         }
-

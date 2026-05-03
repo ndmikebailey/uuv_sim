@@ -30,6 +30,12 @@ ENERGY_PLANNER_CSV_FIELDS = [
     "platform_name",
     "battery_configuration",
     "payload_return_to_start",
+    "payload_recovery_mode",
+    "payload_weight_kg",
+    "payload_weight_penalty_pct",
+    "payload_weight_multiplier",
+    "payload_weight_penalty_basis",
+    "launch_recovery_energy_kwh",
     "mission_duration_hr",
     "route_distance_km",
     "additional_transit_km",
@@ -42,6 +48,13 @@ ENERGY_PLANNER_CSV_FIELDS = [
     "isr_time_on_station_hr",
     "isr_completed_loops",
     "usable_battery_per_set_kwh",
+    "battery_condition_assumption",
+    "battery_usable_fraction_p10",
+    "battery_usable_fraction_p50",
+    "battery_usable_fraction_p90",
+    "operator_reserve_fraction",
+    "temperature_capacity_factor",
+    "temperature_derating_pct",
     "battery_sets_available",
     "total_available_energy_kwh",
     "reserve_fraction",
@@ -61,6 +74,8 @@ ENERGY_PLANNER_CSV_FIELDS = [
     "current_direction_deg",
     "sea_surface_temp_c",
     "sea_surface_salinity_psu",
+    "sea_water_density_kg_m3",
+    "salinity_source",
     "wind_speed_kts",
     "weather_summary",
     "environmental_multiplier",
@@ -70,6 +85,10 @@ ENERGY_PLANNER_CSV_FIELDS = [
     "total_uplift_pct",
     "battery_inventory_sufficient",
     "estimated_recharge_need",
+    "sustainment_total_missions",
+    "sustainment_total_conservative_energy_kwh",
+    "sustainment_inventory_cycles_required",
+    "sustainment_generator_input_energy_kwh",
     "planner_note",
 ]
 
@@ -138,7 +157,7 @@ def _payload_total_distance_km(area: MissionArea, simulation_inputs: dict[str, A
 def _planner_note(mission_type: str, summary: dict[str, Any], simulation_inputs: dict[str, Any]) -> str:
     """Return a short mission-specific sustainment note."""
     if mission_type in {"Payload", "Payload Delivery", "Delivery"}:
-        return "Payload energy reflects route distance, return-to-start setting, current, and added transit."
+        return "Payload energy reflects route distance, recovery mode, payload weight, launch/recovery overhead when applicable, current, and added transit."
     if mission_type in {"ISR", "Intelligence, Surveillance, and Reconnaissance"}:
         return "ISR reports maximum endurance-based time on station before recovery or battery swap."
     if mission_type in {"Area Search / MCM", "Area Search", "MCM", "Mine Countermeasures", "Search"}:
@@ -213,6 +232,13 @@ def build_energy_planner_csv_row(
             "mission_duration_hr": _number(summary.get("mean_duration_hr")),
             "additional_transit_km": _number(simulation_inputs.get("additional_transit_km")),
             "usable_battery_per_set_kwh": usable_per_set,
+            "battery_condition_assumption": summary.get("battery_condition_assumption", ""),
+            "battery_usable_fraction_p10": _number(summary.get("battery_usable_fraction_p10")),
+            "battery_usable_fraction_p50": _number(summary.get("battery_usable_fraction_p50")),
+            "battery_usable_fraction_p90": _number(summary.get("battery_usable_fraction_p90")),
+            "operator_reserve_fraction": _number(summary.get("operator_reserve_fraction")),
+            "temperature_capacity_factor": _number(summary.get("temperature_capacity_factor")),
+            "temperature_derating_pct": _number(summary.get("temperature_derating_pct")),
             "battery_sets_available": int(summary.get("battery_sets_available") or 0),
             "total_available_energy_kwh": total_available,
             "reserve_fraction": reserve_fraction,
@@ -232,6 +258,8 @@ def build_energy_planner_csv_row(
             "current_direction_deg": _number(environment.current_direction_deg_mean),
             "sea_surface_temp_c": _number(environment.sea_surface_temp_c_mean),
             "sea_surface_salinity_psu": _number(environment.sea_surface_salinity_psu),
+            "sea_water_density_kg_m3": _number(environment.sea_water_density_kg_m3),
+            "salinity_source": environment.salinity_source or "",
             "wind_speed_kts": _number(environment.wind_speed_kts_mean),
             "weather_summary": environment.weather_summary or "",
             "environmental_multiplier": _number(environmental_multiplier),
@@ -241,6 +269,10 @@ def build_energy_planner_csv_row(
             "total_uplift_pct": total_uplift_pct,
             "battery_inventory_sufficient": _yes_no(inventory_sufficient),
             "estimated_recharge_need": estimated_recharge_need,
+            "sustainment_total_missions": _number(summary.get("sustainment_total_missions")),
+            "sustainment_total_conservative_energy_kwh": _number(summary.get("sustainment_total_conservative_energy_kwh")),
+            "sustainment_inventory_cycles_required": _number(summary.get("sustainment_inventory_cycles_required")),
+            "sustainment_generator_input_energy_kwh": _number(summary.get("sustainment_generator_input_energy_kwh")),
             "planner_note": _planner_note(mission_type, summary, simulation_inputs),
         }
     )
@@ -248,9 +280,15 @@ def build_energy_planner_csv_row(
     if is_payload:
         row.update(
             {
-                "payload_return_to_start": _yes_no(simulation_inputs.get("return_to_start")),
+                "payload_return_to_start": _yes_no(summary.get("payload_recovery_mode") == "return_to_start"),
+                "payload_recovery_mode": summary.get("payload_recovery_mode", ""),
+                "payload_weight_kg": _number(summary.get("payload_weight_kg")),
+                "payload_weight_penalty_pct": _number(summary.get("payload_weight_penalty_pct")),
+                "payload_weight_multiplier": _number(summary.get("payload_weight_multiplier")),
+                "payload_weight_penalty_basis": summary.get("payload_weight_penalty_basis", ""),
+                "launch_recovery_energy_kwh": _number(summary.get("launch_recovery_energy_kwh")),
                 "route_distance_km": _number(area.route_distance_km or summary.get("route_distance_km")),
-                "total_distance_km": _payload_total_distance_km(area, simulation_inputs),
+                "total_distance_km": _number(summary.get("payload_total_modeled_distance_km") or _payload_total_distance_km(area, simulation_inputs)),
             }
         )
     if is_search:

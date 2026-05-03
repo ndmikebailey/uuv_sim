@@ -66,6 +66,12 @@ class RunLoggerTests(unittest.TestCase):
             "battery_inventory_sufficient_no_recharge": True,
             "recharge_allowed": True,
             "route_distance_km": 3.92,
+            "payload_recovery_mode": "return_to_start",
+            "payload_weight_kg": 25.0,
+            "payload_weight_penalty_pct": 8.3,
+            "payload_weight_multiplier": 1.083,
+            "payload_weight_penalty_basis": "energy_class_scaled",
+            "launch_recovery_energy_kwh": 0.02,
             "environmental_multiplier": 1.006,
             "current_uplift_pct": 0.1,
             "temp_uplift_pct": 0.0,
@@ -96,6 +102,12 @@ class RunLoggerTests(unittest.TestCase):
         self.assertEqual(list(row.keys()), ENERGY_PLANNER_CSV_FIELDS)
         self.assertEqual(row["mission_type"], "Payload Delivery")
         self.assertEqual(row["payload_return_to_start"], "Yes")
+        self.assertEqual(row["payload_recovery_mode"], "return_to_start")
+        self.assertEqual(row["payload_weight_kg"], "25.0")
+        self.assertEqual(row["payload_weight_penalty_pct"], "8.3")
+        self.assertEqual(row["payload_weight_multiplier"], "1.083")
+        self.assertEqual(row["payload_weight_penalty_basis"], "energy_class_scaled")
+        self.assertEqual(row["launch_recovery_energy_kwh"], "0.02")
         self.assertEqual(row["search_area_km2"], "")
         self.assertEqual(row["track_spacing_m"], "")
         self.assertEqual(row["isr_loop_distance_km"], "")

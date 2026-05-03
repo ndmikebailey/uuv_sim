@@ -1,8 +1,8 @@
 # Validation Plan
 
-## v3.0-alpha Purpose
+## v3.3 Research-Development Purpose
 
-The v3.0-alpha build supports controlled dry runs and early physical-test planning. It should not be frozen as the official physical-test baseline until reproducibility, run logging, source traceability, and test coverage are reviewed.
+The v3.3 research-development build supports controlled dry runs, manual UI testing, and model-review planning. It should not be treated as a final baseline until reproducibility, internal traceability records, source traceability, and test coverage are reviewed.
 
 ## Dry Run Checklist
 
@@ -12,7 +12,7 @@ The v3.0-alpha build supports controlled dry runs and early physical-test planni
 4. Confirm mission context loads and simulator inputs prefill.
 5. Override METOC inputs manually and confirm outputs change.
 6. Enter a known Monte Carlo seed and confirm repeatability.
-7. Confirm run-record JSON and results CSV export.
+7. Confirm the user-facing report sections render: Energy Planner Summary, Energy Storage Equivalence Lens, METOC Assessment, Energy Summary, Battery and Sustainment Summary, Mission Geometry Summary, Environmental Inputs, Sustainment Projection Lens, charts, and Mission Visual Summary.
 8. Confirm mission map snapshot renders and the search-pattern overlay appears for Area Search / MCM only.
 
 ## Physical-Test Record Fields
@@ -22,11 +22,12 @@ Each physical test should preserve:
 * run ID
 * timestamp UTC
 * mission type
-* geometry JSON
+* mission geometry
 * vehicle configuration
 * simulation inputs
-* raw marine API JSON
-* raw weather API JSON
+* raw marine API payload
+* raw weather API payload
+* raw salinity-provider payload or metadata when available
 * marine and weather API query parameters
 * app version
 * energy model version

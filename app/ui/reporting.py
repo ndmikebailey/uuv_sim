@@ -55,7 +55,7 @@ def _format_display_cell(value: object, unit: str) -> object:
     unit_lower = unit.lower()
     if unit_lower in {"sets", "loops", "sequences", "runs", "lanes"}:
         return fmt_int(value)
-    if unit_lower in {"kwh", "km", "hr", "kts", "deg c", "%", "kw", "m"}:
+    if unit_lower in {"kwh", "km", "hr", "kts", "deg c", "%", "kw", "m", "kg/m3", "weeks", "missions"}:
         return fmt1(value)
     if isinstance(value, float):
         return fmt1(value)
@@ -196,8 +196,14 @@ def _payload_planning_note(summary: dict[str, object], area: MissionArea, enviro
     route_distance = _as_float(summary.get("route_distance_km") or area.route_distance_km)
     if route_distance is not None:
         parts.append(f"route distance is {_fmt_value(route_distance)} km")
-    if "return_to_start" in summary:
-        parts.append(f"return-to-start is {'enabled' if bool(summary.get('return_to_start')) else 'disabled'}")
+    recovery_mode = str(summary.get("payload_recovery_mode") or "")
+    if recovery_mode == "return_to_start":
+        parts.append("recovery mode is return to start")
+    elif recovery_mode == "one_way":
+        parts.append("recovery mode is one-way / no return")
+    total_distance = _as_float(summary.get("payload_total_modeled_distance_km"))
+    if total_distance is not None and total_distance > 0:
+        parts.append(f"total modeled distance is {_fmt_value(total_distance)} km")
     route_heading = _as_float(summary.get("route_heading_deg") or area.route_heading_deg)
     current_speed = _as_float(environment.current_speed_kts_mean)
     current_dir = _as_float(environment.current_direction_deg_mean)
@@ -214,6 +220,18 @@ def _payload_planning_note(summary: dict[str, object], area: MissionArea, enviro
     burden = _as_float(summary.get("environmental_multiplier"))
     if burden is not None:
         parts.append(f"expected environmental energy burden is about {_fmt_value((burden - 1.0) * 100.0, 1)}%")
+    payload_weight = _as_float(summary.get("payload_weight_kg"))
+    payload_penalty_pct = _as_float(summary.get("payload_weight_penalty_pct"))
+    if payload_weight and payload_weight > 0:
+        parts.append(
+            f"payload weight is {fmt1(payload_weight)} kg; payload carriage penalty: {fmt1(payload_penalty_pct or 0.0, '%')} trim/integration planning burden applied to outbound propulsion energy"
+        )
+    launch_recovery_energy = _as_float(summary.get("launch_recovery_energy_kwh"))
+    if launch_recovery_energy and launch_recovery_energy > 0:
+        parts.append(f"launch/recovery overhead is {fmt1(launch_recovery_energy)} kWh")
+    catalog_note = str(summary.get("payload_one_way_catalog_note") or "")
+    if catalog_note:
+        parts.append(catalog_note)
     return "Payload mission planning: " + "; ".join(parts) + "." if parts else ""
 
 
@@ -379,6 +397,7 @@ def build_energy_planner_summary_html(summary: dict[str, object], area: MissionA
     inventory_sufficient_raw = summary.get("battery_inventory_sufficient_no_recharge")
     inventory_sufficient = bool(inventory_sufficient_raw) if inventory_sufficient_raw is not None else None
     recharge_allowed = bool(summary.get("recharge_allowed"))
+    vehicle_rechargeable = bool(summary.get("vehicle_rechargeable", True))
     conservative_sets_required = math.ceil(p95 / usable_per_set) if p95 is not None and usable_per_set and usable_per_set > 0 else None
     conservative_inventory_sufficient = (
         conservative_sets_required <= sets_available
@@ -391,12 +410,16 @@ def build_energy_planner_summary_html(summary: dict[str, object], area: MissionA
         bluf = "Mission is feasible with current battery inventory at the conservative planning level."
     elif conservative_inventory_sufficient is False and recharge_allowed:
         bluf = "Mission needs recharge, swap sequencing, or additional charged inventory at the conservative planning level."
+    elif conservative_inventory_sufficient is False and not vehicle_rechargeable:
+        bluf = "Mission needs additional one-way inventory or replacement energy production at the conservative planning level."
     elif conservative_inventory_sufficient is False:
         bluf = "Mission is not covered by current battery inventory at the conservative planning level unless additional charged batteries are staged."
     elif inventory_sufficient is True:
         bluf = "Mission is feasible with current battery inventory at the planning level."
     elif inventory_sufficient is False and recharge_allowed:
         bluf = "Mission needs recharge, swap sequencing, or additional charged inventory at the planning level."
+    elif inventory_sufficient is False and not vehicle_rechargeable:
+        bluf = "Mission needs additional one-way inventory or replacement energy production at the planning level."
     elif inventory_sufficient is False:
         bluf = "Mission is not covered by current battery inventory at the planning level unless additional charged batteries are staged."
     if p95 is not None:
@@ -420,7 +443,9 @@ def build_energy_planner_summary_html(summary: dict[str, object], area: MissionA
     active_sets_required = conservative_sets_required or sets_required
     active_inventory_sufficient = conservative_inventory_sufficient if conservative_inventory_sufficient is not None else inventory_sufficient
     if active_sets_required is not None:
-        if active_sets_required > 1 and active_inventory_sufficient:
+        if not vehicle_rechargeable:
+            recharge_swap = "Catalog marks this platform as one-way/non-rechargeable; plan replacement inventory or energy production rather than recharge turnaround."
+        elif active_sets_required > 1 and active_inventory_sufficient:
             recharge_swap = "Battery swap between staged sets is required; no recharge is required if all required sets are available."
         elif active_sets_required > 1:
             recharge_swap = "Battery swap or recharge sequencing is required to cover the conservative mission demand."
@@ -573,6 +598,15 @@ def build_battery_sustainment_rows(summary: dict[str, object]) -> list[tuple[str
     recharge_required = conservative_shortfall_kwh > 0.0
     return [
         ("Usable battery per set", usable_per_set, "kWh"),
+        ("Battery condition assumption", summary.get("battery_condition_assumption"), ""),
+        ("Usable battery fraction expected", _float_or_blank(summary.get("battery_usable_fraction_p50")), ""),
+        ("Usable battery fraction P10", _float_or_blank(summary.get("battery_usable_fraction_p10")), ""),
+        ("Usable battery fraction P90", _float_or_blank(summary.get("battery_usable_fraction_p90")), ""),
+        ("Battery variability sampled separately from operator reserve", _yes_no(summary.get("usable_battery_variability_enabled")), ""),
+        ("Operator reserve fraction", _float_or_blank(summary.get("operator_reserve_fraction")), ""),
+        ("Temperature capacity factor", _float_or_blank(summary.get("temperature_capacity_factor")), ""),
+        ("Temperature derating", _float_or_blank(summary.get("temperature_derating_pct")), "%"),
+        ("Temperature derating basis", summary.get("temperature_derating_basis"), ""),
         ("Battery sets available", summary.get("battery_sets_available"), "sets"),
         ("Total available energy", total_available, "kWh"),
         ("Reserve energy per set", reserve_energy, "kWh"),
@@ -583,6 +617,25 @@ def build_battery_sustainment_rows(summary: dict[str, object]) -> list[tuple[str
         ("Recharge/swap required at conservative level", _yes_no(recharge_required), ""),
         ("Conservative battery inventory sufficient (P95)", _yes_no(conservative_inventory_sufficient), ""),
         ("Planning-level battery inventory sufficient (P80)", _yes_no(summary.get("battery_inventory_sufficient_no_recharge")), ""),
+    ]
+
+
+def build_sustainment_projection_rows(summary: dict[str, object]) -> list[tuple[str, object, str]]:
+    """Build simplified sustainment energy-flow projection rows."""
+    projection_enabled = bool(summary.get("sustainment_projection_enabled"))
+    projection_mode = "Optional mission projection lens" if projection_enabled else "Single mission default"
+    return [
+        ("Projection mode", projection_mode, ""),
+        ("Planning horizon", _float_or_blank(summary.get("sustainment_planning_weeks")), "weeks"),
+        ("Operations per week", _float_or_blank(summary.get("sustainment_missions_per_week")), "missions"),
+        ("Total projected missions", _float_or_blank(summary.get("sustainment_total_missions")), "missions"),
+        ("Conservative energy per mission", _float_or_blank(summary.get("sustainment_conservative_energy_per_mission_kwh")), "kWh"),
+        ("Conservative total energy demand", _float_or_blank(summary.get("sustainment_total_conservative_energy_kwh")), "kWh"),
+        ("Usable inventory energy per cycle", _float_or_blank(summary.get("sustainment_usable_inventory_energy_per_cycle_kwh")), "kWh"),
+        ("Inventory cycles required", _float_or_blank(summary.get("sustainment_inventory_cycles_required")), "cycles"),
+        ("Recharge energy required", _float_or_blank(summary.get("sustainment_recharge_energy_required_kwh")), "kWh"),
+        ("Generator efficiency", _float_or_blank(summary.get("sustainment_generator_efficiency")), ""),
+        ("Generator input energy", _float_or_blank(summary.get("sustainment_generator_input_energy_kwh")), "kWh"),
     ]
 
 
@@ -607,8 +660,18 @@ def build_mission_geometry_summary_rows(
     if mission_type in PAYLOAD_MISSIONS:
         return [
             ("Route distance", _float_or_blank(area.route_distance_km or summary.get("route_distance_km")), "km"),
-            ("Return-to-start enabled", _yes_no(simulation_inputs.get("return_to_start")), ""),
-            ("Total distance", _payload_total_distance_km(area, simulation_inputs), "km"),
+            ("Recovery mode", "Return to start" if summary.get("payload_recovery_mode") == "return_to_start" else "One-way / no return", ""),
+            ("Return-to-start enabled", _yes_no(summary.get("payload_recovery_mode") == "return_to_start"), ""),
+            ("Payload weight", _float_or_blank(summary.get("payload_weight_kg")), "kg"),
+            (
+                "Payload carriage penalty",
+                f"{fmt1(summary.get('payload_weight_penalty_pct'), '%')} trim/integration planning burden applied to outbound propulsion energy",
+                "",
+            ),
+            ("Payload penalty basis", summary.get("payload_weight_penalty_basis"), ""),
+            ("Launch/recovery overhead", _float_or_blank(summary.get("launch_recovery_energy_kwh")), "kWh"),
+            ("One-way/non-rechargeable note", summary.get("payload_one_way_catalog_note"), ""),
+            ("Total modeled distance", _float_or_blank(summary.get("payload_total_modeled_distance_km")), "km"),
             ("METOC lookup point", _metoc_lookup_point(environment, area, "route midpoint"), ""),
         ]
     if mission_type in ISR_MISSIONS:
@@ -666,6 +729,9 @@ def build_environmental_input_rows(
         ("Current direction", _float_or_blank(environment.current_direction_deg_mean), "deg"),
         ("Sea surface temperature", _float_or_blank(environment.sea_surface_temp_c_mean), "deg C"),
         ("Sea surface salinity", _float_or_blank(environment.sea_surface_salinity_psu), "PSU"),
+        ("Sea water density", _float_or_blank(environment.sea_water_density_kg_m3), "kg/m3"),
+        ("Salinity source", environment.salinity_source or "", ""),
+        ("Salinity provider note", "Salinity unavailable from configured provider; standard seawater assumption used." if environment.sea_surface_salinity_psu is None else "", ""),
         ("Wind speed", _float_or_blank(environment.wind_speed_kts_mean), "kts"),
         ("Weather summary", environment.weather_summary or "", ""),
         ("Current uplift", _float_or_blank(summary.get("current_uplift_pct")), "%"),
@@ -839,7 +905,7 @@ def context_markdown(context: dict[str, Any]) -> str:
         f"wind {fmt1(environment.get('wind_speed_kts_mean'))} kts.  \n"
         f"**Weather:** {environment.get('weather_summary') or 'N/A'}"
     )
-    return geom + env
+    return geom + env + "\n\nNow that mission parameters are set, go to UUV simulation."
 
 
 def _interpolate_time_at_energy(time_hours: np.ndarray, energy_series: np.ndarray, threshold: float) -> float | None:

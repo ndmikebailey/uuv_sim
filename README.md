@@ -11,7 +11,7 @@ pinned: false
 ---
 # UUV Mission Planning and Energy Simulator
 
-`v3.1-beta-dev` is a Gradio-based research tool for planning single-UUV missions, estimating energy requirements, and reviewing mission geometry with METOC context.
+`v3.3-research-dev` is a Gradio-based research tool for planning single-UUV missions, estimating energy requirements, and reviewing mission geometry with METOC context.
 
 ## Status
 
@@ -29,7 +29,7 @@ python app.py
 ```text
 app/          Gradio entrypoint, UI wiring, and Leaflet map component
 core/         Pure geometry, mission, energy, and environmental uplift logic
-services/     Open-Meteo clients, METOC fusion, and run-record export
+services/     Open-Meteo clients, Copernicus salinity enrichment, METOC fusion, and internal traceability logging
 models/       Dataclasses for mission, vehicle, and environment state
 utils/        Constants and parsing helpers
 data/         Vehicle catalog and source register
@@ -40,23 +40,28 @@ archive/      Archived monolithic builds
 
 ## Reproducibility
 
-Each simulation records a Monte Carlo seed. If the operator leaves the seed blank, the app generates one and stores it in the output summary and run-record JSON. Re-entering that seed replays the same Monte Carlo sample sequence.
+Each simulation records a Monte Carlo seed. If the operator leaves the seed blank, the app generates one and stores it in the output summary. Re-entering that seed replays the same Monte Carlo sample sequence.
 
-Run records also include the app version, energy model version, vehicle catalog version, git commit when available, mission geometry JSON, raw environmental API payloads, and API query parameters.
+Internal run records preserve traceability for app version, energy model version, vehicle catalog version, git commit when available, mission geometry, raw environmental API payloads, and API query parameters. These records are not advertised as the primary user product.
 
 ## Outputs
 
-Each run exports:
+Current user-facing outputs include:
 
-* run-record JSON
-* results CSV
-* energy/battery tables
-* METOC report card
-* mission map snapshot
-* search-pattern overlay for Area Search / MCM only
+* Energy Planner Summary
+* Energy Storage Equivalence Lens
+* METOC Assessment
+* Energy Summary
+* Battery and Sustainment Summary
+* Mission Geometry Summary
+* Environmental Inputs
+* Sustainment Projection Lens
+* Mission Energy Progress and Battery Lens
+* Mission Energy Uncertainty Distribution
+* Mission Visual Summary
 
 ## Tests
 
 ```bash
-python -m unittest discover -s tests
+python test.py
 ```

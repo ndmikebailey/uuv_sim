@@ -15,6 +15,7 @@ class EnvironmentData:
     current_direction_deg_mean: Optional[float] = None
     sea_surface_temp_c_mean: Optional[float] = None
     sea_surface_salinity_psu: Optional[float] = None
+    sea_water_density_kg_m3: Optional[float] = None
     sea_level_height_m: Optional[float] = None
     wave_height_m: Optional[float] = None
     wave_direction_deg: Optional[float] = None
@@ -35,10 +36,15 @@ class EnvironmentData:
     wind_gusts_kts: Optional[float] = None
     marine_error: Optional[str] = None
     weather_error: Optional[str] = None
+    salinity_error: Optional[str] = None
     raw_marine_api_json: dict[str, Any] = field(default_factory=dict)
     raw_weather_api_json: dict[str, Any] = field(default_factory=dict)
+    raw_salinity_api_json: dict[str, Any] = field(default_factory=dict)
     marine_query_params: dict[str, Any] = field(default_factory=dict)
     weather_query_params: dict[str, Any] = field(default_factory=dict)
+    salinity_query_params: dict[str, Any] = field(default_factory=dict)
+    salinity_metadata: dict[str, Any] = field(default_factory=dict)
+    salinity_source: str = "standard_assumption"
     source: str = "Open-Meteo"
     loaded_at_utc: str = ""
 
@@ -46,6 +52,15 @@ class EnvironmentData:
         """Default timestamp to creation time when omitted."""
         if not self.loaded_at_utc:
             self.loaded_at_utc = datetime.now(timezone.utc).isoformat()
+
+    @property
+    def salinity_psu(self) -> Optional[float]:
+        """Alias for sea-surface salinity in practical salinity units."""
+        return self.sea_surface_salinity_psu
+
+    @salinity_psu.setter
+    def salinity_psu(self, value: Optional[float]) -> None:
+        self.sea_surface_salinity_psu = value
 
     def merged(self, other: "EnvironmentData") -> "EnvironmentData":
         """Return a new environment object with non-null values from ``other``."""
@@ -71,6 +86,8 @@ class EnvironmentData:
             ("Current direction mean", self.current_direction_deg_mean, "deg"),
             ("Sea surface temperature", self.sea_surface_temp_c_mean, "deg C"),
             ("Sea surface salinity", self.sea_surface_salinity_psu, "PSU"),
+            ("Sea water density", self.sea_water_density_kg_m3, "kg/m3"),
+            ("Salinity source", self.salinity_source, ""),
             ("Sea level height MSL", self.sea_level_height_m, "m"),
             ("Wave height", self.wave_height_m, "m"),
             ("Wave direction", self.wave_direction_deg, "deg"),
