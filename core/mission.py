@@ -121,6 +121,7 @@ def aggregate_environments(
         current_speed_kts_mean=current_speed,
         current_direction_deg_mean=current_direction,
         sea_surface_temp_c_mean=scalar("sea_surface_temp_c_mean"),
+        sea_surface_salinity_psu=scalar("sea_surface_salinity_psu"),
         sea_level_height_m=scalar("sea_level_height_m"),
         wave_height_m=scalar("wave_height_m"),
         wave_direction_deg=scalar("wave_direction_deg"),

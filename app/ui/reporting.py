@@ -174,15 +174,20 @@ def _environmental_burden_text(summary: dict[str, object]) -> str | None:
     multiplier = _as_float(summary.get("isr_environmental_multiplier") or summary.get("environmental_multiplier"))
     current_uplift = _as_float(summary.get("current_uplift_pct"))
     temp_uplift = _as_float(summary.get("temp_uplift_pct"))
+    salinity_uplift = _as_float(summary.get("salinity_uplift_pct"))
     total_uplift = (multiplier - 1.0) * 100.0 if multiplier is not None else None
-    if total_uplift is None and (current_uplift is not None or temp_uplift is not None):
-        total_uplift = (current_uplift or 0.0) + (temp_uplift or 0.0)
+    if total_uplift is None and (current_uplift is not None or temp_uplift is not None or salinity_uplift is not None):
+        total_uplift = (current_uplift or 0.0) + (temp_uplift or 0.0) + (salinity_uplift or 0.0)
     if total_uplift is None:
         return None
     detail = ""
-    if current_uplift is not None or temp_uplift is not None:
-        detail = f" (current {_fmt_value(current_uplift or 0.0, 1)}%, temperature {_fmt_value(temp_uplift or 0.0, 1)}%)"
-    return f"Current and temperature add an estimated {_fmt_value(total_uplift, 1)}% energy uplift{detail}."
+    if current_uplift is not None or temp_uplift is not None or salinity_uplift is not None:
+        detail = (
+            f" (current {_fmt_value(current_uplift or 0.0, 1)}%, "
+            f"temperature {_fmt_value(temp_uplift or 0.0, 1)}%, "
+            f"salinity {_fmt_value(salinity_uplift or 0.0, 1)}%)"
+        )
+    return f"Current, temperature, and salinity add an estimated {_fmt_value(total_uplift, 1)}% energy uplift{detail}."
 
 
 def _payload_planning_note(summary: dict[str, object], area: MissionArea, environment: EnvironmentData) -> str:
@@ -547,6 +552,7 @@ def build_energy_summary_rows(summary: dict[str, object]) -> list[tuple[str, obj
         ("Conservative mission energy (P95)", _float_or_blank(summary.get("p95_energy_kwh")), "kWh"),
         ("Mission duration", _float_or_blank(summary.get("mean_duration_hr")), "hr"),
         ("Environmental multiplier", _float_or_blank(environmental_multiplier), ""),
+        ("Salinity uplift", _float_or_blank(summary.get("salinity_uplift_pct")), "%"),
         ("Planning-level energy margin (P80)", total_available - p80, "kWh"),
         ("Conservative energy margin (P95)", total_available - p95, "kWh"),
     ]
@@ -659,10 +665,12 @@ def build_environmental_input_rows(
         ("Current speed", _float_or_blank(environment.current_speed_kts_mean), "kts"),
         ("Current direction", _float_or_blank(environment.current_direction_deg_mean), "deg"),
         ("Sea surface temperature", _float_or_blank(environment.sea_surface_temp_c_mean), "deg C"),
+        ("Sea surface salinity", _float_or_blank(environment.sea_surface_salinity_psu), "PSU"),
         ("Wind speed", _float_or_blank(environment.wind_speed_kts_mean), "kts"),
         ("Weather summary", environment.weather_summary or "", ""),
         ("Current uplift", _float_or_blank(summary.get("current_uplift_pct")), "%"),
         ("Temperature uplift", _float_or_blank(summary.get("temp_uplift_pct")), "%"),
+        ("Salinity uplift", _float_or_blank(summary.get("salinity_uplift_pct")), "%"),
         ("Total uplift", total_uplift_pct, "%"),
     ]
 

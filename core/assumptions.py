@@ -66,6 +66,13 @@ MODEL_ASSUMPTIONS: dict[str, ModelAssumption] = {
         source="core.environment.temperature_energy_penalty.",
         confidence="low-medium",
     ),
+    "salinity_buoyancy_penalty_curve": ModelAssumption(
+        key="salinity_buoyancy_penalty_curve",
+        value="0.5% energy uplift per PSU deviation from 35 PSU, capped at 10%",
+        rationale="Represents planning-level trim/ballast and buoyancy burden from salinity-driven density variation.",
+        source="Engineering planning assumption implemented in core.environment.salinity_buoyancy_penalty.",
+        confidence="low",
+    ),
     "oil_equivalent_conversion_caveat": ModelAssumption(
         key="oil_equivalent_conversion_caveat",
         value="energy-equivalence lens only",

@@ -14,6 +14,7 @@ class EnvironmentData:
     current_speed_kts_mean: Optional[float] = None
     current_direction_deg_mean: Optional[float] = None
     sea_surface_temp_c_mean: Optional[float] = None
+    sea_surface_salinity_psu: Optional[float] = None
     sea_level_height_m: Optional[float] = None
     wave_height_m: Optional[float] = None
     wave_direction_deg: Optional[float] = None
@@ -69,6 +70,7 @@ class EnvironmentData:
             ("Current speed mean", self.current_speed_kts_mean, "kts"),
             ("Current direction mean", self.current_direction_deg_mean, "deg"),
             ("Sea surface temperature", self.sea_surface_temp_c_mean, "deg C"),
+            ("Sea surface salinity", self.sea_surface_salinity_psu, "PSU"),
             ("Sea level height MSL", self.sea_level_height_m, "m"),
             ("Wave height", self.wave_height_m, "m"),
             ("Wave direction", self.wave_direction_deg, "deg"),

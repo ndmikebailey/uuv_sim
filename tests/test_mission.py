@@ -66,6 +66,7 @@ class FakeMetocService:
             current_speed_kts_mean=1.0,
             current_direction_deg_mean=direction,
             sea_surface_temp_c_mean=24.0 if lon < 144.83 else 26.0,
+            sea_surface_salinity_psu=34.0 if lon < 144.83 else 36.0,
             wind_speed_kts_mean=8.0 if lon < 144.83 else 10.0,
             marine_query_params={"latitude": lat, "longitude": lon},
             weather_query_params={"latitude": lat, "longitude": lon},
@@ -123,6 +124,7 @@ class MissionLookupTests(unittest.TestCase):
         self.assertEqual(len(result.context.area.representative_points), 2)
         self.assertIn("area centroid METOC samples", result.status)
         self.assertEqual(result.context.environment.source, "Open-Meteo area-centroid average")
+        self.assertAlmostEqual(float(result.context.environment.sea_surface_salinity_psu or 0.0), 35.0)
 
 
 if __name__ == "__main__":

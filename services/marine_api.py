@@ -43,6 +43,10 @@ class OpenMeteoMarineClient:
             "velocity_unit": "kn",
             "timeformat": "iso8601",
         }
+        trace_params = {
+            **params,
+            "salinity_query_status": "not_requested_open_meteo_marine_unsupported",
+        }
         try:
             response = requests.get(self.url, params=params, timeout=self.timeout, headers={"User-Agent": self.user_agent})
             response.raise_for_status()
@@ -52,6 +56,11 @@ class OpenMeteoMarineClient:
                 current_speed_kts_mean=current.get("ocean_current_velocity"),
                 current_direction_deg_mean=current.get("ocean_current_direction"),
                 sea_surface_temp_c_mean=current.get("sea_surface_temperature"),
+                sea_surface_salinity_psu=(
+                    current.get("sea_surface_salinity")
+                    or current.get("ocean_salinity")
+                    or current.get("salinity")
+                ),
                 sea_level_height_m=current.get("sea_level_height_msl"),
                 wave_height_m=current.get("wave_height"),
                 wave_direction_deg=current.get("wave_direction"),
@@ -59,10 +68,10 @@ class OpenMeteoMarineClient:
                 wind_wave_height_m=current.get("wind_wave_height"),
                 swell_wave_height_m=current.get("swell_wave_height"),
                 raw_marine_api_json=payload,
-                marine_query_params=params,
+                marine_query_params=trace_params,
             )
         except Exception as exc:
             return EnvironmentData(
                 marine_error=str(exc),
-                marine_query_params=params,
+                marine_query_params=trace_params,
             )

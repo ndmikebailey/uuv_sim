@@ -35,6 +35,7 @@ class RunLoggerTests(unittest.TestCase):
             current_speed_kts_mean=0.6,
             current_direction_deg_mean=85.0,
             sea_surface_temp_c_mean=26.0,
+            sea_surface_salinity_psu=36.2,
             wind_speed_kts_mean=10.0,
             weather_summary="Clear",
             raw_marine_api_json={"current": {"speed": 0.6}},
@@ -65,6 +66,10 @@ class RunLoggerTests(unittest.TestCase):
             "battery_inventory_sufficient_no_recharge": True,
             "recharge_allowed": True,
             "route_distance_km": 3.92,
+            "environmental_multiplier": 1.006,
+            "current_uplift_pct": 0.1,
+            "temp_uplift_pct": 0.0,
+            "salinity_uplift_pct": 0.6,
         }
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -95,6 +100,8 @@ class RunLoggerTests(unittest.TestCase):
         self.assertEqual(row["track_spacing_m"], "")
         self.assertEqual(row["isr_loop_distance_km"], "")
         self.assertEqual(row["metoc_lookup_lat"], "13.45")
+        self.assertEqual(row["sea_surface_salinity_psu"], "36.2")
+        self.assertEqual(row["salinity_uplift_pct"], "0.6")
         self.assertEqual(row["weather_summary"], "Clear")
         self.assertEqual(row["battery_inventory_sufficient"], "Yes")
         self.assertIn("Payload energy", row["planner_note"])

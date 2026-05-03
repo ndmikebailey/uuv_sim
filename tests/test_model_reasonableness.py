@@ -164,7 +164,78 @@ class ModelReasonablenessTests(unittest.TestCase):
     def test_assumptions_registry_exports_rows(self) -> None:
         self.assertIn("propulsion_speed_exponent", MODEL_ASSUMPTIONS)
         self.assertIn("default_usable_battery_fraction", MODEL_ASSUMPTIONS)
+        self.assertIn("salinity_buoyancy_penalty_curve", MODEL_ASSUMPTIONS)
         self.assertGreater(len(assumptions_as_rows()), 0)
+
+    def test_missing_salinity_preserves_current_payload_energy(self) -> None:
+        """Phase 2 should not change energy when no salinity is available."""
+        no_salinity = run_energy_simulation(
+            vehicle=self.vehicle,
+            mission_type="Payload Delivery",
+            area=manual_payload_route(20.0, 90.0),
+            environment=self.environment,
+            additional_transit_km=0.0,
+            track_spacing_m=200.0,
+            return_to_start=False,
+            speed_kts=3.0,
+            battery_sets_available=10,
+            recharge_allowed=True,
+            mission_sequences=1,
+            rng_seed=48,
+            monte_carlo_runs=8,
+        )
+        reference_salinity = run_energy_simulation(
+            vehicle=self.vehicle,
+            mission_type="Payload Delivery",
+            area=manual_payload_route(20.0, 90.0),
+            environment=EnvironmentData(
+                current_speed_kts_mean=0.0,
+                current_direction_deg_mean=0.0,
+                sea_surface_temp_c_mean=25.0,
+                sea_surface_salinity_psu=35.0,
+            ),
+            additional_transit_km=0.0,
+            track_spacing_m=200.0,
+            return_to_start=False,
+            speed_kts=3.0,
+            battery_sets_available=10,
+            recharge_allowed=True,
+            mission_sequences=1,
+            rng_seed=48,
+            monte_carlo_runs=8,
+        )
+
+        self.assertEqual(no_salinity.summary["salinity_uplift_pct"], 0.0)
+        self.assertEqual(reference_salinity.summary["salinity_uplift_pct"], 0.0)
+        self.assertEqual(no_salinity.energy_samples_kwh.tolist(), reference_salinity.energy_samples_kwh.tolist())
+
+    def test_salinity_deviation_increases_payload_energy(self) -> None:
+        """Salinity penalty should increase mission energy when salinity deviates from reference."""
+        baseline = self._run_payload(speed_kts=3.0, return_to_start=False)
+        salty_environment = EnvironmentData(
+            current_speed_kts_mean=0.0,
+            current_direction_deg_mean=0.0,
+            sea_surface_temp_c_mean=25.0,
+            sea_surface_salinity_psu=39.0,
+        )
+        result = run_energy_simulation(
+            vehicle=self.vehicle,
+            mission_type="Payload Delivery",
+            area=manual_payload_route(20.0, 90.0),
+            environment=salty_environment,
+            additional_transit_km=0.0,
+            track_spacing_m=200.0,
+            return_to_start=False,
+            speed_kts=3.0,
+            battery_sets_available=10,
+            recharge_allowed=True,
+            mission_sequences=1,
+            rng_seed=42,
+            monte_carlo_runs=8,
+        )
+
+        self.assertAlmostEqual(float(result.summary["salinity_uplift_pct"]), 2.0)
+        self.assertGreater(float(result.summary["p50_energy_kwh"]), baseline)
 
     def test_planning_basis_fields_are_mode_specific(self) -> None:
         payload = self._payload_result().summary

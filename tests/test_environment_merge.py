@@ -14,6 +14,7 @@ class EnvironmentMergeTests(unittest.TestCase):
         """Weather defaults should not erase marine raw payloads or query params."""
         marine = EnvironmentData(
             current_speed_kts_mean=0.7,
+            sea_surface_salinity_psu=34.5,
             raw_marine_api_json={"current": {"ocean_current_velocity": 0.7}},
             marine_query_params={"latitude": 13.4, "longitude": 144.8},
         )
@@ -24,6 +25,7 @@ class EnvironmentMergeTests(unittest.TestCase):
         )
         fused = marine.merged(weather)
         self.assertEqual(fused.raw_marine_api_json, marine.raw_marine_api_json)
+        self.assertEqual(fused.sea_surface_salinity_psu, 34.5)
         self.assertEqual(fused.marine_query_params, marine.marine_query_params)
         self.assertEqual(fused.raw_weather_api_json, weather.raw_weather_api_json)
         self.assertEqual(fused.weather_query_params, weather.weather_query_params)
@@ -47,6 +49,12 @@ class EnvironmentMergeTests(unittest.TestCase):
         self.assertEqual(merged.air_temp_c, 29.0)
         self.assertEqual(merged.raw_marine_api_json, {"current": {"ocean_current_velocity": 2.2}})
         self.assertEqual(merged.marine_query_params, {"latitude": 13.4, "longitude": 144.7})
+
+    def test_salinity_is_in_environment_table_rows(self) -> None:
+        """Salinity should be visible in operator-facing environmental inputs."""
+        environment = EnvironmentData(sea_surface_salinity_psu=35.1)
+        rows = environment.table_rows(13.4, 144.8)
+        self.assertIn(("Sea surface salinity", 35.1, "PSU"), rows)
 
 
 if __name__ == "__main__":

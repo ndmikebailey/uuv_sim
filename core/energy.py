@@ -13,6 +13,7 @@ from core.environment import (
     current_components,
     environmental_uplift_factor,
     payload_current_penalty,
+    salinity_buoyancy_penalty,
     search_current_duration_multiplier,
     temperature_energy_penalty,
 )
@@ -252,6 +253,7 @@ def run_energy_simulation(
     current_mean = float(environment.current_speed_kts_mean if environment.current_speed_kts_mean is not None else 0.5)
     current_dir = float(environment.current_direction_deg_mean if environment.current_direction_deg_mean is not None else 0.0)
     temp_mean = float(environment.sea_surface_temp_c_mean if environment.sea_surface_temp_c_mean is not None else 25.0)
+    salinity_penalty = salinity_buoyancy_penalty(environment.sea_surface_salinity_psu)
     current_sigma_kts = max(0.10, 0.25 * max(current_mean, 0.1))
     sampled_current = np.clip(rng.normal(current_mean, current_sigma_kts, n), 0, None)
     sampled_temp = rng.normal(temp_mean, 1.5, n)
@@ -287,11 +289,11 @@ def run_energy_simulation(
             duration_single = outbound_time + return_time + transit_time
             current_penalty = payload_current_penalty(cur, current_dir, route_heading, speed_kts)
             requested_power_kw = estimate_power_at_speed_kw(vehicle, speed_kts)
-            energy_single = requested_power_kw * duration_single * environmental_uplift_factor(temp, current_penalty)
+            energy_single = requested_power_kw * duration_single * environmental_uplift_factor(temp, current_penalty, salinity_penalty)
         elif mission_type in ISR_MISSIONS:
             endurance_speed_kts = max(float(speed_kts or vehicle.nominal_speed_kts), 0.1)
             current_penalty = isr_current_power_penalty(cur, endurance_speed_kts)
-            environmental_multiplier = environmental_uplift_factor(temp, current_penalty)
+            environmental_multiplier = environmental_uplift_factor(temp, current_penalty, salinity_penalty)
             endurance_power_kw = estimate_power_at_speed_kw(vehicle, endurance_speed_kts)
             persistence = compute_isr_persistence(
                 loop_distance_km=isr_loop_distance_km,
@@ -312,7 +314,7 @@ def run_energy_simulation(
                 duration_candidate = base_duration * search_current_duration_multiplier(cur, current_dir, option.track_heading_deg, speed_kts)
                 duration_candidate += option.turns * 0.01
                 requested_power_kw = estimate_power_at_speed_kw(vehicle, speed_kts)
-                energy_candidate = requested_power_kw * duration_candidate * (1 + temp_penalty)
+                energy_candidate = requested_power_kw * duration_candidate * (1 + temp_penalty + salinity_penalty)
                 option_results.append((energy_candidate, duration_candidate, option))
 
             best_energy, best_duration, best_option = min(option_results, key=lambda item: item[0])
@@ -406,8 +408,9 @@ def run_energy_simulation(
         }
 
     mean_temp_uplift_pct = temperature_energy_penalty(temp_mean) * 100.0
+    mean_salinity_uplift_pct = salinity_penalty * 100.0
     mean_current_uplift_pct = 0.0
-    mean_environmental_multiplier = 1.0 + (mean_temp_uplift_pct / 100.0)
+    mean_environmental_multiplier = 1.0 + (mean_temp_uplift_pct + mean_salinity_uplift_pct) / 100.0
     if mission_type in PAYLOAD_MISSIONS:
         mean_current_uplift_pct = payload_current_penalty(
             current_mean,
@@ -415,10 +418,10 @@ def run_energy_simulation(
             float(area.route_heading_deg or 0.0),
             speed_kts,
         ) * 100.0
-        mean_environmental_multiplier = 1.0 + (mean_temp_uplift_pct + mean_current_uplift_pct) / 100.0
+        mean_environmental_multiplier = 1.0 + (mean_temp_uplift_pct + mean_current_uplift_pct + mean_salinity_uplift_pct) / 100.0
     elif mission_type in ISR_MISSIONS:
         mean_current_uplift_pct = isr_current_power_penalty(current_mean, max(float(speed_kts or vehicle.nominal_speed_kts), 0.1)) * 100.0
-        mean_environmental_multiplier = 1.0 + (mean_temp_uplift_pct + mean_current_uplift_pct) / 100.0
+        mean_environmental_multiplier = 1.0 + (mean_temp_uplift_pct + mean_current_uplift_pct + mean_salinity_uplift_pct) / 100.0
     elif mission_type in SEARCH_MISSIONS and search_options:
         selected_search_plan = next(
             (option for option in search_options if option.orientation == orientation_summary),
@@ -433,7 +436,7 @@ def run_energy_simulation(
             )
             - 1.0
         ) * 100.0
-        mean_environmental_multiplier = (1.0 + mean_current_uplift_pct / 100.0) * (1.0 + mean_temp_uplift_pct / 100.0)
+        mean_environmental_multiplier = (1.0 + mean_current_uplift_pct / 100.0) * (1.0 + (mean_temp_uplift_pct + mean_salinity_uplift_pct) / 100.0)
 
     if mission_type in ISR_MISSIONS:
         planning_energy_basis = "patrol_loop"
@@ -486,6 +489,7 @@ def run_energy_simulation(
         "route_heading_deg": area.route_heading_deg,
         "current_uplift_pct": mean_current_uplift_pct,
         "temp_uplift_pct": mean_temp_uplift_pct,
+        "salinity_uplift_pct": mean_salinity_uplift_pct,
         "environmental_multiplier": mean_environmental_multiplier,
         "reserve_margin_per_set_kwh": max(vehicle.battery_kwh - usable_battery_per_set, 0.0),
         "battery_remaining_pct_p80": max(0.0, min(100.0, 100.0 * (1.0 - p80 / max(total_available_kwh, 0.001)))),

@@ -92,6 +92,10 @@ The assumptions are traceable in `core/assumptions.py`:
 - `default_hotel_load_fraction`
 - `propulsion_speed_exponent`
 
+Current implementation detail: the active default hotel fraction is `0.35`, with `0.65` of baseline power treated as propulsion at nominal speed. The project notes include a 20/80 hotel/propulsion option, but that option has not replaced the current code default.
+
+The project-note hydrodynamic cylinder equations are methodology cross-check equations, not active simulation equations. The implementation remains a weighted operational planning model.
+
 ## Current Direction And METOC Burden
 
 Current is decomposed relative to mission heading where needed. Payload uses route heading and return heading. Search/MCM uses track heading. ISR applies a modest station-keeping/current burden relative to endurance speed.
@@ -104,6 +108,8 @@ Multi-area Search/MCM uses one METOC lookup per area centroid. Current is vector
 - aggregate direction is converted back to compass degrees
 
 Scalar environmental values such as sea surface temperature and wind speed are averaged normally.
+
+Salinity is carried as `sea_surface_salinity_psu` when available from manual input, future API support, or a supplied payload. Open-Meteo Marine currently rejects `sea_surface_salinity`, so the live request omits that variable and records the omission in query traceability. Salinity is displayed and exported for traceability, and multi-area salinity is scalar-averaged when present. When salinity is present and deviates from 35 PSU, the model applies a bounded salinity/buoyancy planning uplift. Missing salinity and 35 PSU preserve existing energy behavior.
 
 ## Battery Inventory And Reserve Logic
 
@@ -141,11 +147,15 @@ The uncertainty distribution is a planning lens. It does not represent a fully v
 
 ## Limitations And Future Work
 
+- See `docs/implementation_kanban.md` for the current implementation-only development board.
+- See `docs/current_logic_and_equations.md` for the compact equation and current-logic reference.
 - Add stochastic usable battery fraction model.
 - Refine temperature derating with literature or test data.
+- Add payload weight input and mass penalty multiplier.
+- Add optional launch/recovery energy tax for recoverable missions.
+- Add hibernate/sprint phase logic for payload missions that require long loiter periods.
 - Add Sustainment Projection Lens UI using existing backend helpers.
 - Improve per-area Search/MCM lane rendering instead of aggregate equivalent area only.
 - Add contested-delay/loiter interruption model.
 - Expand thesis documentation with assumption provenance, validation scenarios, and sensitivity analysis.
 - Reconcile app version constants with v3.3-beta branch naming before release.
-

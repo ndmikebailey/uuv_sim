@@ -60,11 +60,13 @@ ENERGY_PLANNER_CSV_FIELDS = [
     "current_speed_kts",
     "current_direction_deg",
     "sea_surface_temp_c",
+    "sea_surface_salinity_psu",
     "wind_speed_kts",
     "weather_summary",
     "environmental_multiplier",
     "current_uplift_pct",
     "temp_uplift_pct",
+    "salinity_uplift_pct",
     "total_uplift_pct",
     "battery_inventory_sufficient",
     "estimated_recharge_need",
@@ -181,7 +183,7 @@ def build_energy_planner_csv_row(
     inventory_sufficient = bool(summary.get("battery_inventory_sufficient_no_recharge"))
     metoc_lat, metoc_lon = _metoc_lookup_point(environment)
 
-    environmental_multiplier = summary.get("isr_environmental_multiplier")
+    environmental_multiplier = summary.get("isr_environmental_multiplier") or summary.get("environmental_multiplier")
     total_uplift_pct = ""
     if environmental_multiplier not in (None, ""):
         try:
@@ -229,9 +231,13 @@ def build_energy_planner_csv_row(
             "current_speed_kts": _number(environment.current_speed_kts_mean),
             "current_direction_deg": _number(environment.current_direction_deg_mean),
             "sea_surface_temp_c": _number(environment.sea_surface_temp_c_mean),
+            "sea_surface_salinity_psu": _number(environment.sea_surface_salinity_psu),
             "wind_speed_kts": _number(environment.wind_speed_kts_mean),
             "weather_summary": environment.weather_summary or "",
             "environmental_multiplier": _number(environmental_multiplier),
+            "current_uplift_pct": _number(summary.get("current_uplift_pct")),
+            "temp_uplift_pct": _number(summary.get("temp_uplift_pct")),
+            "salinity_uplift_pct": _number(summary.get("salinity_uplift_pct")),
             "total_uplift_pct": total_uplift_pct,
             "battery_inventory_sufficient": _yes_no(inventory_sufficient),
             "estimated_recharge_need": estimated_recharge_need,

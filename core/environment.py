@@ -34,7 +34,19 @@ def search_current_duration_multiplier(current_speed_kts: float, current_directi
     return 1.0 + along_penalty + cross_penalty
 
 
-def environmental_uplift_factor(temp_c: float, current_penalty: float = 0.0) -> float:
-    """Return combined multiplicative uplift for tests and planning calculations."""
-    return 1.0 + temperature_energy_penalty(temp_c) + current_penalty
+def salinity_buoyancy_penalty(
+    salinity_psu: float | None,
+    reference_psu: float = 35.0,
+    penalty_per_psu: float = 0.005,
+    max_penalty: float = 0.10,
+) -> float:
+    """Return a bounded planning penalty for salinity-driven trim/buoyancy burden."""
+    if salinity_psu is None:
+        return 0.0
+    deviation = abs(float(salinity_psu) - reference_psu)
+    return min(max_penalty, deviation * penalty_per_psu)
 
+
+def environmental_uplift_factor(temp_c: float, current_penalty: float = 0.0, salinity_penalty: float = 0.0) -> float:
+    """Return combined multiplicative uplift for tests and planning calculations."""
+    return 1.0 + temperature_energy_penalty(temp_c) + current_penalty + salinity_penalty
