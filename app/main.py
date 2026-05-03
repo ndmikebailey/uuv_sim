@@ -69,6 +69,31 @@ CUSTOM_CSS = """
 }
 .planner-summary h3 { margin-top: 0; }
 .planner-summary p { margin: 8px 0; line-height: 1.45; }
+.mission-decision-brief h2 { margin: 0 0 12px 0; }
+.decision-topline { display: grid; grid-template-columns: minmax(120px, 180px) 1fr; gap: 14px; align-items: stretch; }
+.decision-status { display: flex; align-items: center; justify-content: center; border-radius: 8px; padding: 14px; font-weight: 900; font-size: 20px; }
+.decision-status.green, .decision-kpi.green { background: #064e3b; border-color: #10b981; }
+.decision-status.yellow, .decision-kpi.yellow { background: rgba(234, 179, 8, 0.16); border-color: #eab308; }
+.decision-status.red, .decision-kpi.red { background: #7f1d1d; border-color: #ef4444; }
+.decision-status.gray, .decision-kpi.gray { background: #374151; border-color: #9ca3af; }
+.decision-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; margin-top: 14px; }
+.decision-kpi { border: 1px solid #475569; border-radius: 8px; padding: 10px; min-height: 76px; }
+.decision-kpi-label { color: #cbd5e1; font-size: 12px; font-weight: 700; }
+.decision-kpi-value { font-size: 20px; font-weight: 900; margin-top: 6px; }
+.decision-kpi-note { color: #e5e7eb; font-size: 12px; margin-top: 4px; }
+.executive-results-summary {
+  border: 1px solid #334155;
+  border-left: 3px solid #60a5fa;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  padding: 10px 12px;
+  margin-top: 12px;
+}
+.executive-results-title { color: #cbd5e1; font-size: 12px; font-weight: 800; text-transform: uppercase; }
+.executive-results-text { color: #e5e7eb; font-size: 13px; line-height: 1.45; margin: 5px 0 0 0; }
+.traceability-detail { margin: 10px 0; }
+.traceability-detail summary { cursor: pointer; font-weight: 800; padding: 10px 0; }
+.metoc-assessment, .metoc-panel, .metoc-card-grid { width: 100%; max-width: none; }
 .metoc-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .posture { font-weight: 800; font-size: 18px; padding: 8px 12px; border-radius: 10px; background: #1f2937; }
 .report-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 14px; }
@@ -83,8 +108,8 @@ CUSTOM_CSS = """
 .report-table th { background: #1f2937; }
 .report-table .metric-col { width: 60%; }
 .report-table .value-col { width: 40%; }
-.metoc-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
-.metoc-card { flex: 1 1 150px; min-width: 140px; max-width: 220px; border-radius: 10px; padding: 10px; min-height: 120px; border: 2px solid #4b5563; }
+.metoc-grid, .metoc-card-grid { width: 100%; max-width: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
+.metoc-card { width: 100%; min-width: 0; max-width: none; border-radius: 10px; padding: 10px; min-height: 120px; border: 2px solid #4b5563; }
 .metoc-card.green { background: #064e3b; border-color: #10b981; }
 .metoc-card.yellow { background: rgba(234, 179, 8, 0.16); border-color: #eab308; }
 .metoc-card.red { background: #7f1d1d; border-color: #ef4444; }
@@ -534,6 +559,8 @@ def run_from_ui(
             f"completed patrol loops using inventory: {summary.get('isr_completed_loops_total_inventory', 0)}."
         )
     status += " Go to Results tab. Your simulation is ready."
+    summary["rng_seed_requested"] = parsed_seed
+    summary["rng_seed_used"] = summary.get("rng_seed")
 
     simulation_inputs = {
         "additional_transit_km": safe_float(additional_transit_km, 0.0) or 0.0,
@@ -556,18 +583,18 @@ def run_from_ui(
         "generator_efficiency": safe_float(generator_efficiency, 0.84) or 0.84,
     }
     summary["sustainment_projection_enabled"] = bool(sustainment_projection_enabled)
-    energy_summary_html = build_report_table_html(build_energy_summary_rows(summary), "Energy Summary")
+    energy_summary_html = build_report_table_html(build_energy_summary_rows(summary), "Energy Detail")
     battery_sustainment_html = (
-        build_report_table_html(build_battery_sustainment_rows(summary), "Battery and Sustainment Summary")
+        build_report_table_html(build_battery_sustainment_rows(summary), "Battery and Sustainment Detail")
         + build_report_table_html(build_sustainment_projection_rows(summary), "Sustainment Projection Lens")
     )
     mission_geometry_html = build_report_table_html(
         build_mission_geometry_summary_rows(summary, area, environment, simulation_inputs),
-        "Mission Geometry Summary",
+        "Mission Geometry Detail",
     )
     environmental_inputs_html = build_report_table_html(
         build_environmental_input_rows(summary, environment),
-        "Environmental Inputs",
+        "Environmental Detail",
     )
     equivalence_energy_kwh, equivalence_basis = _energy_equivalence_planning_basis(summary)
     energy_equivalence_html = build_report_table_html(
@@ -721,31 +748,31 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
         with gr.Tab("3. Results"):
             gr.HTML("<div id='results-anchor'></div>")
             results_card = gr.HTML("<div class='uuv-card'>Run a mission simulation to populate results.</div>")
-            gr.Markdown("### Energy Storage Equivalence Lens")
-            energy_equivalence_table = gr.HTML("")
-            gr.Markdown(
-                "Energy-equivalence values are provided as a secondary sustainment-planning lens. "
-                "Oil-equivalent values are approximate conversions and do not imply direct fuel interchangeability."
-            )
             metoc_results_card = gr.HTML("")
-            gr.Markdown("### Energy Summary")
+            with gr.Row():
+                mission_map_snapshot_plot = gr.Plot(label="Mission Visual Summary", visible=True)
+                energy_time_plot = gr.Plot(label="Mission Energy Progress and Battery Lens")
+            results_plot = gr.Plot(label="Mission Energy Uncertainty Distribution")
+            gr.Markdown("### Energy Detail")
             gr.Markdown(
                 "Expected, planning-level, and conservative estimates correspond to the 50th, 80th, "
                 "and 95th percentile simulation results. They are used to show how mission energy "
                 "demand changes under uncertainty."
             )
             energy_summary_table = gr.HTML("")
-            gr.Markdown("### Battery and Sustainment Summary")
+            gr.Markdown("### Battery and Sustainment Detail")
             battery_sustainment_table = gr.HTML("")
-            gr.Markdown("### Mission Geometry Summary")
+            gr.Markdown("### Mission Geometry Detail")
             mission_geometry_summary_table = gr.HTML("")
-            gr.Markdown("### Environmental Inputs")
+            gr.Markdown("### Environmental Detail")
             environmental_inputs_table = gr.HTML("")
-            energy_time_plot = gr.Plot(label="Mission Energy Progress and Battery Lens")
-            results_plot = gr.Plot(label="Mission Energy Uncertainty Distribution")
-            with gr.Row():
-                mission_map_snapshot_plot = gr.Plot(label="Mission Visual Summary", visible=True)
-                search_overlay_plot = gr.Plot(label="Search Pattern Overlay", visible=False)
+            gr.Markdown("### Energy Storage Equivalence Lens")
+            energy_equivalence_table = gr.HTML("")
+            gr.Markdown(
+                "Energy-equivalence values are provided as a secondary sustainment-planning lens. "
+                "Oil-equivalent values are approximate conversions and do not imply direct fuel interchangeability."
+            )
+            search_overlay_plot = gr.Plot(label="Search Pattern Overlay", visible=False)
 
         refresh_map_btn.click(refresh_map, inputs=[region_select], outputs=[map_html])
         mission_type_builder.change(mission_builder_visibility, inputs=[mission_type_builder], outputs=[search_note, payload_note])

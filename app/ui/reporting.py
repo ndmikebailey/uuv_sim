@@ -10,12 +10,22 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from matplotlib.lines import Line2D
+
 from core.environment import current_components, payload_current_penalty
 from core.geometry import clipped_search_lanes, isr_path_distance_per_loop_km, local_bounds, search_polygon_points
 from models.environment_model import EnvironmentData
 from models.mission_model import MissionArea, MissionAreaSet
 from services.metoc_fusion import MetocFusionService
-from utils.constants import EARTH_RADIUS_KM, ISR_MISSIONS, PAYLOAD_MISSIONS, SEARCH_MISSIONS
+from utils.constants import (
+    APP_VERSION,
+    EARTH_RADIUS_KM,
+    ENERGY_MODEL_VERSION,
+    ISR_MISSIONS,
+    PAYLOAD_MISSIONS,
+    SEARCH_MISSIONS,
+    VEHICLE_CATALOG_VERSION,
+)
 
 
 def fmt1(value: object, suffix: str = "") -> str:
@@ -169,6 +179,246 @@ def _summary_bullet(label: str, text: str | None) -> str:
     return f"<li><b>{escape(label)}:</b> {escape(text)}</li>"
 
 
+def _risk_class(label: str) -> str:
+    """Map plain risk/status wording to report color classes."""
+    lower = str(label or "").lower()
+    if any(word in lower for word in ("not feasible", "shortfall", "not covered", "needs")):
+        return "red"
+    if any(word in lower for word in ("marginal", "limited", "swap", "recharge")):
+        return "yellow"
+    if any(word in lower for word in ("feasible", "sufficient", "favorable")):
+        return "green"
+    return "gray"
+
+
+def _kpi_tile(label: str, value: object, note: str = "", status: str = "") -> str:
+    """Render a compact KPI tile."""
+    class_name = _risk_class(status or str(value))
+    note_html = f"<div class='decision-kpi-note'>{escape(note)}</div>" if note else ""
+    return (
+        f"<div class='decision-kpi {class_name}'>"
+        f"<div class='decision-kpi-label'>{escape(label)}</div>"
+        f"<div class='decision-kpi-value'>{escape(str(value))}</div>"
+        f"{note_html}</div>"
+    )
+
+
+def _plain_status_text(summary: dict[str, object]) -> tuple[str, str]:
+    """Return top-line feasibility and action-oriented recommendation."""
+    if str(summary.get("mission_type") or "") in ISR_MISSIONS:
+        return _isr_status_text(summary)
+    p80 = _as_float(summary.get("p80_energy_kwh"))
+    p95 = _as_float(summary.get("p95_energy_kwh"))
+    total_available = _as_float(summary.get("total_available_kwh"))
+    sets_p80 = _as_int(summary.get("battery_sets_required_p80"))
+    sets_available = _as_int(summary.get("battery_sets_available"))
+    usable_per_set = _as_float(summary.get("usable_battery_per_set_kwh"))
+    sets_p95 = math.ceil(p95 / usable_per_set) if p95 is not None and usable_per_set and usable_per_set > 0 else sets_p80
+    margin_p80 = (total_available - p80) if total_available is not None and p80 is not None else None
+    if sets_available is not None and sets_p95 is not None and sets_p95 <= sets_available:
+        return "Feasible", "Proceed with the current battery inventory; preserve the recorded assumptions for review."
+    if sets_available is not None and sets_p80 is not None and sets_p80 <= sets_available:
+        return "Marginal", "Mission covers the planning case, but stage extra battery or recharge support for conservative conditions."
+    if margin_p80 is not None and margin_p80 >= 0:
+        return "Marginal", "Planning energy is covered, but conservative margin is limited; avoid repeated tasking without added inventory."
+    return "Not feasible", "Add charged battery inventory, reduce route/search burden, or plan recharge/swap support before execution."
+
+
+def _isr_status_text(summary: dict[str, object]) -> tuple[str, str]:
+    """Return ISR feasibility using endurance/loop coverage rather than mission-total battery sets."""
+    completed_total = _as_int(summary.get("isr_completed_loops_total_inventory")) or 0
+    completed_single = _as_int(summary.get("isr_completed_loops_single_set") or summary.get("isr_completed_loops")) or 0
+    partial_total_km = _as_float(summary.get("isr_partial_loop_distance_km_total_inventory"))
+    partial_single_km = _as_float(summary.get("isr_partial_loop_distance_km_single_set"))
+    total_distance = _as_float(summary.get("isr_total_patrol_distance_km_total_inventory") or summary.get("isr_total_patrol_distance_km_single_set"))
+    single_set_endurance = _as_float(summary.get("isr_single_set_endurance_hr") or summary.get("isr_max_time_on_station_hr"))
+    swap_window = _as_float(summary.get("isr_swap_window_hr") or single_set_endurance)
+    loop_count = max(completed_total, completed_single)
+    partial_km = partial_total_km if partial_total_km is not None else partial_single_km
+    if loop_count >= 1:
+        return (
+            "Feasible",
+            (
+                f"ISR endurance is feasible for the selected patrol. One installed set supports approximately "
+                f"{fmt1(single_set_endurance)} hr, {fmt_int(completed_single)} full patrol loop(s), plus "
+                f"{fmt1(partial_single_km)} km of the next loop. Plan recovery/swap at approximately {fmt1(swap_window)} hr."
+            ),
+        )
+    if single_set_endurance is not None and single_set_endurance > 0 and partial_km is not None and partial_km > 0:
+        return (
+            "Marginal",
+            (
+                "ISR patrol is endurance-limited. The vehicle cannot complete one full loop, "
+                f"but can cover approximately {fmt1(total_distance or partial_km)} km before recovery/swap."
+            ),
+        )
+    return (
+        "Not feasible",
+        "ISR patrol is not feasible with the selected inventory and route because no meaningful patrol distance/endurance is available.",
+    )
+
+
+def _metoc_risk_text(summary: dict[str, object], environment: EnvironmentData) -> str:
+    """Return compact METOC risk text for the decision brief."""
+    current_uplift = _as_float(summary.get("current_uplift_pct")) or 0.0
+    salinity_uplift = _as_float(summary.get("salinity_uplift_pct")) or 0.0
+    temp_derating = _as_float(summary.get("temperature_derating_pct")) or 0.0
+    if max(current_uplift, salinity_uplift, temp_derating) >= 8.0:
+        return "Review"
+    if max(current_uplift, salinity_uplift, temp_derating) >= 3.0:
+        return "Marginal"
+    if environment.weather_summary:
+        return "Review"
+    return "Favorable"
+
+
+def _decision_kpis(summary: dict[str, object], environment: EnvironmentData) -> list[str]:
+    """Build mission-appropriate KPI tiles for the decision brief."""
+    mission_type = str(summary.get("mission_type") or "")
+    metoc_risk = _metoc_risk_text(summary, environment)
+    if mission_type in ISR_MISSIONS:
+        partial_km = _as_float(summary.get("isr_partial_loop_distance_km_total_inventory"))
+        partial_pct = _as_float(summary.get("isr_remaining_partial_loop_pct"))
+        partial_text = f"{fmt1(partial_km)} km" if partial_km is not None else f"{fmt1(partial_pct)}%"
+        return [
+            _kpi_tile("Patrol loop distance", f"{fmt1(summary.get('isr_loop_distance_km'))} km"),
+            _kpi_tile("Full loops", f"{fmt_int(summary.get('isr_completed_loops_total_inventory') or summary.get('isr_completed_loops_single_set'))} loops"),
+            _kpi_tile("Partial next loop", partial_text),
+            _kpi_tile("Endurance per set", f"{fmt1(summary.get('isr_single_set_endurance_hr') or summary.get('isr_max_time_on_station_hr'))} hr"),
+            _kpi_tile("Total patrol distance", f"{fmt1(summary.get('isr_total_patrol_distance_km_total_inventory') or summary.get('isr_total_patrol_distance_km_single_set'))} km"),
+            _kpi_tile("Recovery/swap", f"{fmt1(summary.get('isr_swap_window_hr') or summary.get('isr_single_set_endurance_hr'))} hr"),
+            _kpi_tile("METOC risk", metoc_risk, status=metoc_risk),
+        ]
+    usable_per_set = _as_float(summary.get("usable_battery_per_set_kwh"))
+    p80 = _as_float(summary.get("p80_energy_kwh"))
+    p95 = _as_float(summary.get("p95_energy_kwh"))
+    total_available = _as_float(summary.get("total_available_kwh"))
+    sets_p80 = _as_int(summary.get("battery_sets_required_p80"))
+    sets_p95 = math.ceil(p95 / usable_per_set) if p95 is not None and usable_per_set and usable_per_set > 0 else sets_p80
+    margin = (total_available - p80) if total_available is not None and p80 is not None else None
+    sets_available = int(summary.get("battery_sets_available") or 0)
+    return [
+        _kpi_tile("Planning energy P80", f"{fmt1(p80)} kWh"),
+        _kpi_tile("Conservative energy P95", f"{fmt1(p95)} kWh"),
+        _kpi_tile("Battery sets P80", fmt_int(sets_p80), status="sufficient" if sets_p80 and sets_p80 <= sets_available else "marginal"),
+        _kpi_tile("Battery sets P95", fmt_int(sets_p95), status="sufficient" if sets_p95 and sets_p95 <= sets_available else "marginal"),
+        _kpi_tile("Inventory margin", f"{fmt1(margin)} kWh", status="sufficient" if margin is not None and margin >= 0 else "shortfall"),
+        _kpi_tile("Mission duration", f"{fmt1(summary.get('mean_duration_hr'))} hr"),
+        _kpi_tile("METOC risk", metoc_risk, status=metoc_risk),
+    ]
+
+
+def _monte_carlo_phrase(summary: dict[str, object]) -> str:
+    """Return the visible Monte Carlo ensemble phrase."""
+    for key in ("monte_carlo_runs", "mc_runs", "simulation_count", "num_samples", "n_samples"):
+        runs = _as_int(summary.get(key))
+        if runs is not None and runs > 0:
+            return f"{runs} Monte Carlo trials"
+    return "the configured Monte Carlo ensemble"
+
+
+def _seed_phrase(summary: dict[str, object]) -> str:
+    """Return whether the run used a user-fixed deterministic seed."""
+    requested_seed = summary.get("rng_seed_requested")
+    if requested_seed not in (None, ""):
+        return f"using deterministic seed {escape(str(requested_seed))}"
+    if "rng_seed_requested" not in summary and summary.get("rng_seed") not in (None, ""):
+        return f"using deterministic seed {escape(str(summary.get('rng_seed')))}"
+    return "without a fixed deterministic seed"
+
+
+def _planning_basis_phrase(summary: dict[str, object]) -> str:
+    """Translate planning basis keys into executive-readable text."""
+    basis = str(summary.get("planning_energy_basis") or "")
+    if basis == "patrol_loop":
+        return "patrol-loop endurance"
+    if basis == "endurance_window":
+        return "endurance-window"
+    return "mission-total energy"
+
+
+def _dominant_factor_phrase(summary: dict[str, object], mission_type: str) -> str:
+    """Choose one compact driver phrase for the executive summary."""
+    current = _as_float(summary.get("current_uplift_pct")) or 0.0
+    salinity = _as_float(summary.get("salinity_uplift_pct")) or 0.0
+    temp_derating = _as_float(summary.get("temperature_derating_pct")) or 0.0
+    burdens = {
+        "route/track current burden": current,
+        "salinity/buoyancy burden": salinity,
+        "cold-water battery-capacity derating": temp_derating,
+    }
+    best_label, best_value = max(burdens.items(), key=lambda item: item[1])
+    if best_value > 0.0:
+        return best_label
+    payload_weight = _as_float(summary.get("payload_weight_kg")) or 0.0
+    if payload_weight > 0.0:
+        return "payload trim/integration burden"
+    if mission_type in SEARCH_MISSIONS:
+        return "search area and track-spacing burden"
+    if mission_type in ISR_MISSIONS:
+        return "patrol loop length and endurance-mode speed"
+    return "mission geometry and selected vehicle energy capacity"
+
+
+def _executive_results_summary_html(summary: dict[str, object], environment: EnvironmentData) -> str:
+    """Render a compact scientific executive-results summary."""
+    del environment
+    mission_type = str(summary.get("mission_type") or "")
+    ensemble = _monte_carlo_phrase(summary)
+    seed = _seed_phrase(summary)
+    basis = _planning_basis_phrase(summary)
+    if mission_type in ISR_MISSIONS:
+        first = (
+            f"The simulation executed {ensemble} {seed}, evaluating ISR persistence as a "
+            f"{basis} problem with expected (P50), planning-level (P80), and conservative (P95) uncertainty views."
+        )
+        details: list[str] = []
+        endurance = _as_float(summary.get("isr_single_set_endurance_hr") or summary.get("isr_max_time_on_station_hr"))
+        loops = _as_int(summary.get("isr_completed_loops_single_set") or summary.get("isr_completed_loops_total_inventory"))
+        partial = _as_float(summary.get("isr_partial_loop_distance_km_single_set") or summary.get("isr_partial_loop_distance_km_total_inventory"))
+        loop_distance = _as_float(summary.get("isr_loop_distance_km"))
+        loop_time = _as_float(summary.get("isr_loop_time_hr"))
+        swap_window = _as_float(summary.get("isr_swap_window_hr") or endurance)
+        if loop_distance is not None and loop_time is not None:
+            details.append(f"the patrol loop is {fmt1(loop_distance)} km over {fmt1(loop_time)} hr")
+        if endurance is not None:
+            details.append(f"one installed set supports about {fmt1(endurance)} hr")
+        if loops is not None:
+            loop_text = f"{fmt_int(loops)} full loop(s)"
+            if partial is not None:
+                loop_text += f" plus {fmt1(partial)} km of the next loop"
+            details.append(loop_text)
+        if swap_window is not None:
+            details.append(f"recovery/swap is planned near {fmt1(swap_window)} hr")
+        second = "The results indicate " + "; ".join(details) + "." if details else ""
+    else:
+        first = (
+            f"The simulation executed {ensemble} {seed}, evaluating {basis} demand against selected battery "
+            f"inventory with expected (P50), planning-level (P80), and conservative (P95) uncertainty views."
+        )
+        p80 = _as_float(summary.get("p80_energy_kwh"))
+        p95 = _as_float(summary.get("p95_energy_kwh"))
+        details = []
+        if p80 is not None:
+            details.append(f"planning energy demand of {fmt1(p80)} kWh")
+        if p95 is not None:
+            details.append(f"conservative demand of {fmt1(p95)} kWh")
+        factor = _dominant_factor_phrase(summary, mission_type)
+        second = (
+            f"The results indicate {' and '.join(details)}, with battery sufficiency driven primarily by {factor}."
+            if details
+            else f"Battery sufficiency is driven primarily by {factor}."
+        )
+    sentences = [sentence for sentence in (first, second) if sentence and "None" not in sentence]
+    text = " ".join(sentences[:2])
+    return (
+        "<div class='executive-results-summary'>"
+        "<div class='executive-results-title'>Executive Results Summary</div>"
+        f"<p class='executive-results-text'>{escape(text)}</p>"
+        "</div>"
+    )
+
+
 def _environmental_burden_text(summary: dict[str, object]) -> str | None:
     """Build the environmental uplift sentence from summary values."""
     multiplier = _as_float(summary.get("isr_environmental_multiplier") or summary.get("environmental_multiplier"))
@@ -258,15 +508,15 @@ def _isr_planning_note(summary: dict[str, object]) -> str:
     if single_set_endurance is not None:
         partial_text = f", plus {fmt1(partial_single_km)} km of the next loop" if partial_single_km and partial_single_km > 0.05 else ""
         completed_text = f" after {fmt_int(completed_loops_single)} full loop(s)" if completed_loops_single is not None else ""
-        parts.append(f"one installed set supports about {fmt1(single_set_endurance)} hr{completed_text}{partial_text}")
+        parts.append(f"One installed set supports about {fmt1(single_set_endurance)} hr{completed_text}{partial_text}")
     if total_inventory_endurance is not None:
         partial_text = f", plus {fmt1(partial_total_km)} km of the next loop" if partial_total_km and partial_total_km > 0.05 else ""
         completed_text = f" after {fmt_int(completed_loops_total)} full loop(s)" if completed_loops_total is not None else ""
-        parts.append(f"total available inventory supports about {fmt1(total_inventory_endurance)} hr{completed_text}{partial_text}")
+        parts.append(f"Total available inventory supports about {fmt1(total_inventory_endurance)} hr{completed_text}{partial_text}")
     if total_distance_single_km is not None:
-        parts.append(f"total patrol distance before recovery/swap is {fmt1(total_distance_single_km)} km per installed set")
+        parts.append(f"Total patrol distance before recovery/swap is {fmt1(total_distance_single_km)} km per installed set")
     if total_distance_inventory_km is not None:
-        parts.append(f"total patrol distance using available inventory is {fmt1(total_distance_inventory_km)} km")
+        parts.append(f"Total patrol distance before battery exhaustion using available inventory is {fmt1(total_distance_inventory_km)} km")
     if single_set_endurance is not None:
         parts.append(f"plan recovery or battery swap at about {fmt1(single_set_endurance)} hr per installed set before retasking")
     return "ISR persistence planning: " + "; ".join(parts) + "." if parts else ""
@@ -322,10 +572,73 @@ def _mission_planning_note(summary: dict[str, object], area: MissionArea, enviro
 
 def build_energy_planner_summary_html(summary: dict[str, object], area: MissionArea, environment: EnvironmentData, vehicle: object | None = None) -> str:
     """
-    Build an energy-planner-focused HTML/Markdown summary.
+    Build the top decision brief plus lower technical traceability.
 
-    This should be a BLUF-style planning summary, not a raw data dump.
+    This should read as a planning product first, with reviewer detail below.
     """
+    mission_type = str(summary.get("mission_type") or "")
+    status, recommendation = _plain_status_text(summary)
+    kpis = _decision_kpis(summary, environment)
+    planning_note = _mission_planning_note(summary, area, environment)
+    executive_summary = _executive_results_summary_html(summary, environment)
+    decision_html = f"""
+    <div class='uuv-card planner-summary mission-decision-brief'>
+      <h2>Mission Decision Brief</h2>
+      <div class='decision-topline'>
+        <div class='decision-status {_risk_class(status)}'>{escape(status)}</div>
+        <div>
+          <h3>BLUF</h3>
+          <p>{escape(recommendation)}</p>
+          <p class='small-muted'>{escape(planning_note or '')}</p>
+        </div>
+      </div>
+      {executive_summary}
+      <div class='decision-kpi-grid'>{''.join(kpis)}</div>
+    </div>
+    """
+    traceability_html = build_technical_traceability_html(summary, environment, vehicle)
+    return decision_html + traceability_html
+
+
+def build_technical_traceability_html(summary: dict[str, object], environment: EnvironmentData, vehicle: object | None = None) -> str:
+    """Build the lower technical traceability/model-detail section."""
+    source_note = getattr(vehicle, "source_note", "") if vehicle is not None else summary.get("source_note", "")
+    usable_basis = getattr(vehicle, "usable_basis", "") if vehicle is not None else summary.get("usable_basis", "")
+    rows = [
+        ("App version", APP_VERSION, ""),
+        ("Energy model version", ENERGY_MODEL_VERSION, ""),
+        ("Vehicle catalog version", VEHICLE_CATALOG_VERSION, ""),
+        ("Planning basis", summary.get("planning_energy_basis"), ""),
+        ("Planning percentile", summary.get("planning_percentile"), ""),
+        ("Monte Carlo seed", summary.get("rng_seed"), ""),
+        ("Usable battery fraction P10", _float_or_blank(summary.get("battery_usable_fraction_p10")), ""),
+        ("Usable battery fraction P50", _float_or_blank(summary.get("battery_usable_fraction_p50")), ""),
+        ("Usable battery fraction P90", _float_or_blank(summary.get("battery_usable_fraction_p90")), ""),
+        ("Temperature derating basis", summary.get("temperature_derating_basis"), ""),
+        ("Salinity provider status", environment.salinity_source or "standard_assumption", ""),
+        ("METOC lookup method", _trace_lookup_method(summary, environment), ""),
+        ("Multi-area aggregation method", summary.get("metoc_aggregation_method"), ""),
+        ("Run-record traceability status", summary.get("run_record_traceability_status", "recorded"), ""),
+        ("Source note", source_note, ""),
+        ("Usable battery basis", usable_basis, ""),
+    ]
+    table = build_report_table_html(rows, "Technical Traceability / Model Detail")
+    if not table:
+        return ""
+    return f"<details class='traceability-detail'><summary>Technical Traceability / Model Detail</summary>{table}</details>"
+
+
+def _trace_lookup_method(summary: dict[str, object], environment: EnvironmentData) -> str:
+    """Return a compact traceability phrase for METOC lookup."""
+    if summary.get("metoc_aggregation_method"):
+        return str(summary.get("metoc_aggregation_method"))
+    if environment.marine_query_params or environment.weather_query_params:
+        return "Mission geometry representative point"
+    return "Manual simulator environment"
+
+
+def _legacy_energy_planner_summary_html(summary: dict[str, object], area: MissionArea, environment: EnvironmentData, vehicle: object | None = None) -> str:
+    """Legacy summary retained for reference while decision brief replaces it."""
     del vehicle
     mission_type = str(summary.get("mission_type") or "")
     if mission_type in ISR_MISSIONS:
@@ -490,7 +803,7 @@ def results_html(summary: dict[str, object]) -> str:
         detail_rows.append(("Payload route heading", f"{fmt1(summary.get('route_heading_deg'))} deg"))
     details = "".join(f"<div><strong>{key}:</strong> {value}</div>" for key, value in detail_rows)
     return f"""
-    <div class='uuv-card'>
+    <div class='uuv-card full-width-card metoc-assessment metoc-panel'>
       <h2>Run Summary</h2>
       <p><strong>{summary.get("mission_type")}</strong> on <strong>{summary.get("platform")}</strong></p>
       <p>
@@ -571,13 +884,18 @@ def build_energy_summary_rows(summary: dict[str, object]) -> list[tuple[str, obj
     p80 = float(summary.get("p80_energy_kwh") or 0.0)
     p95 = float(summary.get("p95_energy_kwh") or 0.0)
     environmental_multiplier = summary.get("isr_environmental_multiplier") or summary.get("environmental_multiplier") or ""
+    total_uplift_pct: float | str = ""
+    if environmental_multiplier not in ("", None):
+        try:
+            total_uplift_pct = (float(environmental_multiplier) - 1.0) * 100.0
+        except (TypeError, ValueError):
+            total_uplift_pct = ""
     return [
         ("Expected mission energy (P50)", _float_or_blank(summary.get("p50_energy_kwh")), "kWh"),
         ("Planning-level mission energy (P80)", p80, "kWh"),
         ("Conservative mission energy (P95)", _float_or_blank(summary.get("p95_energy_kwh")), "kWh"),
         ("Mission duration", _float_or_blank(summary.get("mean_duration_hr")), "hr"),
-        ("Environmental multiplier", _float_or_blank(environmental_multiplier), ""),
-        ("Salinity uplift", _float_or_blank(summary.get("salinity_uplift_pct")), "%"),
+        ("Total environmental uplift", total_uplift_pct, "%"),
         ("Planning-level energy margin (P80)", total_available - p80, "kWh"),
         ("Conservative energy margin (P95)", total_available - p95, "kWh"),
     ]
@@ -600,16 +918,12 @@ def build_battery_sustainment_rows(summary: dict[str, object]) -> list[tuple[str
         ("Usable battery per set", usable_per_set, "kWh"),
         ("Battery condition assumption", summary.get("battery_condition_assumption"), ""),
         ("Usable battery fraction expected", _float_or_blank(summary.get("battery_usable_fraction_p50")), ""),
-        ("Usable battery fraction P10", _float_or_blank(summary.get("battery_usable_fraction_p10")), ""),
-        ("Usable battery fraction P90", _float_or_blank(summary.get("battery_usable_fraction_p90")), ""),
-        ("Battery variability sampled separately from operator reserve", _yes_no(summary.get("usable_battery_variability_enabled")), ""),
+        ("Usable battery fraction range", _usable_fraction_range(summary), ""),
         ("Operator reserve fraction", _float_or_blank(summary.get("operator_reserve_fraction")), ""),
-        ("Temperature capacity factor", _float_or_blank(summary.get("temperature_capacity_factor")), ""),
-        ("Temperature derating", _float_or_blank(summary.get("temperature_derating_pct")), "%"),
-        ("Temperature derating basis", summary.get("temperature_derating_basis"), ""),
+        ("Temperature derating", _nonzero_float(summary.get("temperature_derating_pct")), "%"),
         ("Battery sets available", summary.get("battery_sets_available"), "sets"),
         ("Total available energy", total_available, "kWh"),
-        ("Reserve energy per set", reserve_energy, "kWh"),
+        ("Reserve energy per set", reserve_energy if reserve_energy > 0 else "", "kWh"),
         ("Battery sets required at conservative level (P95)", conservative_sets_required, "sets"),
         ("Battery sets required at planning level (P80)", summary.get("battery_sets_required_p80"), "sets"),
         ("Conservative shortfall (P95)", conservative_shortfall_kwh, "kWh"),
@@ -618,6 +932,24 @@ def build_battery_sustainment_rows(summary: dict[str, object]) -> list[tuple[str
         ("Conservative battery inventory sufficient (P95)", _yes_no(conservative_inventory_sufficient), ""),
         ("Planning-level battery inventory sufficient (P80)", _yes_no(summary.get("battery_inventory_sufficient_no_recharge")), ""),
     ]
+
+
+def _nonzero_float(value: object) -> float | str:
+    """Return a float only when the value is meaningfully nonzero."""
+    numeric = _as_float(value)
+    if numeric is None or abs(numeric) < 1e-9:
+        return ""
+    return numeric
+
+
+def _usable_fraction_range(summary: dict[str, object]) -> str:
+    """Return compact P10/P50/P90 usable battery fraction text."""
+    p10 = _as_float(summary.get("battery_usable_fraction_p10"))
+    p50 = _as_float(summary.get("battery_usable_fraction_p50"))
+    p90 = _as_float(summary.get("battery_usable_fraction_p90"))
+    if p10 is None or p50 is None or p90 is None:
+        return ""
+    return f"P10 {fmt1(p10)} / P50 {fmt1(p50)} / P90 {fmt1(p90)}"
 
 
 def build_sustainment_projection_rows(summary: dict[str, object]) -> list[tuple[str, object, str]]:
@@ -652,26 +984,26 @@ def build_mission_geometry_summary_rows(
             ("Geometry", "Multi-area search plan", ""),
             ("Number of search areas", summary.get("number_of_search_areas", len(area.areas)), "areas"),
             ("Total search area", _float_or_blank(summary.get("total_search_area_km2", area.total_area_km2)), "sq km"),
+            ("Track spacing", _float_or_blank(simulation_inputs.get("track_spacing_m") or summary.get("track_spacing_m")), "m"),
+            ("Estimated lane/route burden", _float_or_blank(summary.get("search_total_distance_km")), "km"),
             ("METOC sampled points", summary.get("metoc_sample_count", len(area.representative_points)), "points"),
-            ("Aggregate current", f"{fmt1(environment.current_speed_kts_mean)} kts @ {fmt1(environment.current_direction_deg_mean)} deg", ""),
-            ("Planning environment", "averaged from area centroids", ""),
             ("METOC aggregation method", summary.get("metoc_aggregation_method", "area-centroid vector average"), ""),
         ]
     if mission_type in PAYLOAD_MISSIONS:
         return [
             ("Route distance", _float_or_blank(area.route_distance_km or summary.get("route_distance_km")), "km"),
             ("Recovery mode", "Return to start" if summary.get("payload_recovery_mode") == "return_to_start" else "One-way / no return", ""),
-            ("Return-to-start enabled", _yes_no(summary.get("payload_recovery_mode") == "return_to_start"), ""),
-            ("Payload weight", _float_or_blank(summary.get("payload_weight_kg")), "kg"),
+            ("Total modeled distance", _float_or_blank(summary.get("payload_total_modeled_distance_km")), "km"),
+            ("Payload weight", _nonzero_float(summary.get("payload_weight_kg")), "kg"),
             (
                 "Payload carriage penalty",
-                f"{fmt1(summary.get('payload_weight_penalty_pct'), '%')} trim/integration planning burden applied to outbound propulsion energy",
+                f"{fmt1(summary.get('payload_weight_penalty_pct'), '%')} trim/integration planning burden applied to outbound propulsion energy"
+                if _as_float(summary.get("payload_weight_penalty_pct")) and (_as_float(summary.get("payload_weight_penalty_pct")) or 0) > 0
+                else "",
                 "",
             ),
-            ("Payload penalty basis", summary.get("payload_weight_penalty_basis"), ""),
-            ("Launch/recovery overhead", _float_or_blank(summary.get("launch_recovery_energy_kwh")), "kWh"),
+            ("Launch/recovery overhead", _nonzero_float(summary.get("launch_recovery_energy_kwh")), "kWh"),
             ("One-way/non-rechargeable note", summary.get("payload_one_way_catalog_note"), ""),
-            ("Total modeled distance", _float_or_blank(summary.get("payload_total_modeled_distance_km")), "km"),
             ("METOC lookup point", _metoc_lookup_point(environment, area, "route midpoint"), ""),
         ]
     if mission_type in ISR_MISSIONS:
@@ -701,9 +1033,12 @@ def build_mission_geometry_summary_rows(
             orientation = ""
         return [
             ("Search area", _float_or_blank(area.area_km2), "sq km"),
+            ("Number of search areas", summary.get("number_of_search_areas", 1), "areas"),
             ("Track spacing", _float_or_blank(simulation_inputs.get("track_spacing_m") or summary.get("track_spacing_m")), "m"),
             ("Recommended orientation", orientation, ""),
-            ("Estimated track length", _float_or_blank(summary.get("search_track_distance_km")), "km"),
+            ("Estimated lane/route burden", _float_or_blank(summary.get("search_total_distance_km") or summary.get("search_track_distance_km")), "km"),
+            ("METOC sampled points", summary.get("metoc_sample_count", 1), "points"),
+            ("METOC aggregation method", summary.get("metoc_aggregation_method"), ""),
             ("METOC lookup point", _metoc_lookup_point(environment, area, "area centroid"), ""),
         ]
     return [
@@ -734,9 +1069,9 @@ def build_environmental_input_rows(
         ("Salinity provider note", "Salinity unavailable from configured provider; standard seawater assumption used." if environment.sea_surface_salinity_psu is None else "", ""),
         ("Wind speed", _float_or_blank(environment.wind_speed_kts_mean), "kts"),
         ("Weather summary", environment.weather_summary or "", ""),
-        ("Current uplift", _float_or_blank(summary.get("current_uplift_pct")), "%"),
-        ("Temperature uplift", _float_or_blank(summary.get("temp_uplift_pct")), "%"),
-        ("Salinity uplift", _float_or_blank(summary.get("salinity_uplift_pct")), "%"),
+        ("Current uplift", _nonzero_float(summary.get("current_uplift_pct")), "%"),
+        ("Temperature uplift", _nonzero_float(summary.get("temp_uplift_pct")), "%"),
+        ("Salinity uplift", _nonzero_float(summary.get("salinity_uplift_pct")), "%"),
         ("Total uplift", total_uplift_pct, "%"),
     ]
 
@@ -781,7 +1116,7 @@ def metoc_html(environment: EnvironmentData, fusion_service: MetocFusionService)
         </div>
         """)
     return f"""
-    <div class='uuv-card'>
+    <div class='uuv-card full-width-card metoc-assessment metoc-panel'>
       <div class='metoc-header'>
         <div>
           <h3>METOC Assessment</h3>
@@ -789,7 +1124,7 @@ def metoc_html(environment: EnvironmentData, fusion_service: MetocFusionService)
         </div>
         <div class='posture'>Overall: {assessment['posture']}</div>
       </div>
-      <div class='metoc-grid'>{''.join(cards)}</div>
+      <div class='metoc-grid metoc-card-grid'>{''.join(cards)}</div>
     </div>
     """
 
@@ -1082,17 +1417,26 @@ def _draw_current_arrow(ax: Any, environment: EnvironmentData, bounds: tuple[flo
         linewidth=1.5,
         color="#7c2d12",
         zorder=6,
+        label="Current vector",
     )
-    ax.text(
-        x0 + dx * 0.5,
-        y0 + dy * 0.5,
-        "Current",
-        fontsize=8.5,
-        ha="center",
-        va="bottom",
-        bbox=dict(boxstyle="round,pad=0.2", facecolor="white", edgecolor="#cbd5e1", alpha=0.84),
-        zorder=7,
-    )
+
+
+def _dedupe_legend(ax: Any, max_items: int = 4) -> None:
+    """Render a compact legend with repeated labels collapsed."""
+    handles, labels = ax.get_legend_handles_labels()
+    deduped: dict[str, Any] = {}
+    for handle, label in zip(handles, labels):
+        if label and not label.startswith("_") and label not in deduped:
+            deduped[label] = handle
+    if "Current vector" in deduped:
+        deduped["Current vector"] = Line2D([0], [0], color="#7c2d12", linestyle="--", linewidth=1.8)
+    items = list(deduped.items())
+    if "Current vector" in deduped and len(items) > max_items:
+        items = [item for item in items if item[0] != "Current vector"][: max_items - 1] + [("Current vector", deduped["Current vector"])]
+    limited = items[:max_items]
+    if limited:
+        labels_limited, handles_limited = zip(*[(label, handle) for label, handle in limited])
+        ax.legend(handles_limited, labels_limited, loc="upper right", fontsize=8)
 
 
 def _project_route_points(area: MissionArea) -> list[tuple[float, float]]:
@@ -1162,14 +1506,14 @@ def _draw_area_lanes(ax: Any, area: MissionArea, track_spacing_m: float, orienta
     lanes = clipped_search_lanes(area, track_spacing_m, orientation)
     xs = [p[0] for p in points] + [points[0][0]]
     ys = [p[1] for p in points] + [points[0][1]]
-    ax.fill(xs, ys, color="#38bdf8", alpha=0.16, label="Selected mission area")
-    ax.plot(xs, ys, color="#075985", linewidth=2.3, label="Mission area boundary")
+    ax.fill(xs, ys, color="#38bdf8", alpha=0.16, label="Search area(s)")
+    ax.plot(xs, ys, color="#075985", linewidth=2.3)
     min_x, max_x, min_y, max_y = local_bounds(points)
     span_x = max(max_x - min_x, 0.001)
     span_y = max(max_y - min_y, 0.001)
     segments = list(lanes.get("segments", []))
     for index, (x0, y0, x1, y1) in enumerate(segments):
-        ax.plot([x0, x1], [y0, y1], color="#0f766e", linewidth=1.35, alpha=0.78)
+        ax.plot([x0, x1], [y0, y1], color="#0f766e", linewidth=1.35, alpha=0.78, label="Search lanes" if index == 0 else "_nolegend_")
         if len(segments) > 30 and index % max(1, len(segments) // max(1, arrow_density)) != 0:
             continue
         dx = x1 - x0
@@ -1224,7 +1568,7 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea |
             wrap=True,
         )
         ax.set_title("Payload Route and Current Snapshot", pad=10, fontsize=13)
-        ax.legend(loc="upper right", fontsize=8)
+        _dedupe_legend(ax, max_items=4)
         fig.tight_layout(rect=(0, 0.06, 1, 1))
         return fig
 
@@ -1233,14 +1577,13 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea |
             patrol_points = _project_route_points(area)
             xs = [point[0] for point in patrol_points]
             ys = [point[1] for point in patrol_points]
-            ax.plot(xs, ys, color="#075985", linewidth=2.4, marker="o", markersize=4, label="ISR line patrol")
-            ax.plot(list(reversed(xs)), list(reversed(ys)), color="#0f766e", linewidth=1.6, linestyle="--", label="Return leg")
+            ax.plot(xs, ys, color="#075985", linewidth=2.4, marker="o", markersize=4, label="ISR patrol route")
         else:
             patrol_points = search_polygon_points(area)
             xs = [point[0] for point in patrol_points] + [patrol_points[0][0]]
             ys = [point[1] for point in patrol_points] + [patrol_points[0][1]]
-            ax.fill(xs, ys, color="#38bdf8", alpha=0.16, label="ISR patrol area")
-            ax.plot(xs, ys, color="#075985", linewidth=2.4, label="Perimeter patrol")
+            ax.fill(xs, ys, color="#38bdf8", alpha=0.16)
+            ax.plot(xs, ys, color="#075985", linewidth=2.4, label="ISR patrol loop")
         bounds = _set_limits(ax, patrol_points, equal_aspect=True)
         _draw_current_arrow(ax, environment, bounds)
         _draw_north_arrow(ax, *bounds)
@@ -1259,7 +1602,7 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea |
             fontsize=8,
             wrap=True,
         )
-        ax.legend(loc="upper right", fontsize=8)
+        _dedupe_legend(ax, max_items=4)
         fig.tight_layout(rect=(0, 0.06, 1, 1))
         return fig
 
@@ -1286,7 +1629,7 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea |
                 continue
             xs = [point[0] for point in points] + [points[0][0]]
             ys = [point[1] for point in points] + [points[0][1]]
-            ax.fill(xs, ys, color="#38bdf8", alpha=0.12)
+            ax.fill(xs, ys, color="#38bdf8", alpha=0.12, label="Search area(s)" if index == 1 else "_nolegend_")
             ax.plot(xs, ys, color="#075985", linewidth=2.0)
             cx = sum(point[0] for point in points) / len(points)
             cy = sum(point[1] for point in points) / len(points)
@@ -1302,6 +1645,7 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea |
         _draw_north_arrow(ax, *bounds)
         _draw_scale_bar(ax, *bounds)
         ax.set_title("Multi-Area Search Plan Snapshot", pad=10, fontsize=13)
+        _dedupe_legend(ax, max_items=4)
         fig.text(
             0.5,
             0.025,
@@ -1346,6 +1690,7 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea |
         fontsize=9,
         bbox=dict(boxstyle="round,pad=0.35", facecolor="#eef2f7", edgecolor="#94a3b8", alpha=0.95),
     )
+    _dedupe_legend(ax, max_items=4)
     fig.tight_layout()
     return fig
 

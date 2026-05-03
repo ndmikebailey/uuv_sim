@@ -151,6 +151,13 @@ class AppCallbackSmokeTests(unittest.TestCase):
         )
         return context, result
 
+    def _executive_summary_text(self, html: object) -> str:
+        """Extract the compact executive summary block for report contract checks."""
+        text = str(html)
+        start = text.index("Executive Results Summary")
+        end = text.index("decision-kpi-grid", start)
+        return text[start:end]
+
     def test_search_geometry_report_outputs_and_run_record_traceability(self) -> None:
         """ISR area geometry should run as endurance patrols and preserve traceability."""
         for geometry in [RECTANGLE_GEOMETRY, CONVEX_POLYGON_GEOMETRY, CONCAVE_POLYGON_GEOMETRY]:
@@ -160,12 +167,24 @@ class AppCallbackSmokeTests(unittest.TestCase):
                 self.assertIn("Estimated ISR endurance", str(result[0]))
                 self.assertIn("view-results-btn active", str(result[1]))
                 self.assertIn("isr_loop_distance_km", result[10])
-                self.assertIn("Energy Planner Summary", str(result[11]))
-                self.assertIn("Conservative planning energy", str(result[11]))
-                self.assertIn("Energy demand", str(result[11]))
-                self.assertIn("Battery sustainment", str(result[11]))
-                self.assertIn("Environmental burden", str(result[11]))
-                self.assertIn("Planning note", str(result[11]))
+                self.assertIn("Mission Decision Brief", str(result[11]))
+                self.assertIn("BLUF", str(result[11]))
+                self.assertLess(str(result[11]).index("BLUF"), str(result[11]).index("Executive Results Summary"))
+                self.assertLess(str(result[11]).index("Executive Results Summary"), str(result[11]).index("Technical Traceability / Model Detail"))
+                self.assertIn("Technical Traceability / Model Detail", str(result[11]))
+                self.assertIn("Patrol loop distance", str(result[11]))
+                self.assertIn("Endurance per set", str(result[11]))
+                executive_summary = self._executive_summary_text(result[11])
+                self.assertIn("100 Monte Carlo trials", executive_summary)
+                self.assertIn("using deterministic seed 12345", executive_summary)
+                self.assertIn("ISR persistence", executive_summary)
+                self.assertIn("patrol-loop endurance", executive_summary)
+                self.assertIn("P50", executive_summary)
+                self.assertIn("P80", executive_summary)
+                self.assertIn("P95", executive_summary)
+                self.assertNotIn("None", executive_summary)
+                self.assertNotIn("Battery sets P80", str(result[11]))
+                self.assertNotIn("Battery sets P95", str(result[11]))
                 self.assertNotIn("Available battery inventory", str(result[11]))
                 self.assertIn("Conservative mission energy estimate (P95)", str(result[12]))
                 self.assertIn("Barrel-of-oil equivalent", str(result[12]))
@@ -209,8 +228,17 @@ class AppCallbackSmokeTests(unittest.TestCase):
             built[0],
         )
         self.assertIn("Recommended track orientation", str(result[0]))
-        self.assertIn("Energy Planner Summary", str(result[11]))
+        self.assertIn("Mission Decision Brief", str(result[11]))
         self.assertIn("Search/MCM planning", str(result[11]))
+        executive_summary = self._executive_summary_text(result[11])
+        self.assertIn("Executive Results Summary", executive_summary)
+        self.assertIn("mission-total energy", executive_summary)
+        self.assertIn("planning energy demand", executive_summary)
+        self.assertIn("conservative demand", executive_summary)
+        self.assertIn("battery sufficiency driven primarily by", executive_summary)
+        self.assertNotIn("None", executive_summary)
+        self.assertIn("Battery sets P80", str(result[11]))
+        self.assertIn("Battery sets P95", str(result[11]))
         self.assertIn("Conservative mission energy estimate (P95)", str(result[12]))
         self.assertEqual(result[8]["visible"], True)
         self.assertEqual(result[9]["visible"], False)
@@ -296,6 +324,20 @@ class AppCallbackSmokeTests(unittest.TestCase):
             summary["isr_completed_loops_full_single_set"] * summary["isr_loop_distance_km"],
         )
         self.assertIn("One installed set supports", str(result[11]))
+        self.assertIn("Feasible", str(result[11]))
+        self.assertNotIn("Not feasible", str(result[11]))
+        executive_summary = self._executive_summary_text(result[11])
+        self.assertIn("100 Monte Carlo trials", executive_summary)
+        self.assertIn("using deterministic seed 12345", executive_summary)
+        self.assertIn("ISR persistence", executive_summary)
+        self.assertIn("patrol-loop endurance", executive_summary)
+        self.assertIn("one installed set supports", executive_summary)
+        self.assertNotIn("None", executive_summary)
+        self.assertIn("Patrol loop distance", str(result[11]))
+        self.assertIn("Endurance per set", str(result[11]))
+        self.assertIn("Recovery/swap", str(result[11]))
+        self.assertNotIn("Battery sets P80", str(result[11]))
+        self.assertNotIn("Battery sets P95", str(result[11]))
         self.assertIn("before recovery/swap", str(result[11]))
         self.assertIn("Total available inventory supports", str(result[11]))
         self.assertIn("before battery exhaustion", str(result[11]))
@@ -306,6 +348,16 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertGreater(len(result[7].axes[0].patches), 0)
         self.assertIn("ISR Mission Energy Uncertainty Distribution", result[7].axes[0].get_title())
         self.assertGreater(len(result[6].axes[0].collections), 0)
+
+    def test_report_css_supports_full_width_metoc(self) -> None:
+        """METOC assessment should use full-width responsive card-grid styling."""
+        css = main.CUSTOM_CSS
+        self.assertIn(".metoc-assessment", css)
+        self.assertIn("max-width: none", css)
+        self.assertIn("repeat(auto-fit, minmax(220px, 1fr))", css)
+        html = main.metoc_html(EnvironmentData(), main.METOC_SERVICE)
+        self.assertIn("metoc-assessment", html)
+        self.assertIn("metoc-card-grid", html)
 
     def test_small_energy_equivalents_do_not_round_to_zero(self) -> None:
         """Small secondary equivalence values should retain useful precision."""
@@ -342,18 +394,34 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertEqual(len(payload_run), 14)
         self.assertNotIn("Recommended track orientation", str(payload_run[0]))
         self.assertIn("view-results-btn active", str(payload_run[1]))
-        self.assertIn("Energy Planner Summary", str(payload_run[11]))
-        self.assertIn("Energy Summary", str(payload_run[2]))
-        self.assertIn("Battery and Sustainment Summary", str(payload_run[3]))
+        self.assertIn("Mission Decision Brief", str(payload_run[11]))
+        self.assertIn("Technical Traceability / Model Detail", str(payload_run[11]))
+        self.assertLess(str(payload_run[11]).index("BLUF"), str(payload_run[11]).index("Executive Results Summary"))
+        self.assertLess(str(payload_run[11]).index("Executive Results Summary"), str(payload_run[11]).index("Technical Traceability / Model Detail"))
+        self.assertIn("Energy Detail", str(payload_run[2]))
+        self.assertIn("Battery and Sustainment Detail", str(payload_run[3]))
         self.assertIn("Sustainment Projection Lens", str(payload_run[3]))
         self.assertIn("Single mission default", str(payload_run[3]))
-        self.assertIn("Mission Geometry Summary", str(payload_run[4]))
-        self.assertIn("Environmental Inputs", str(payload_run[5]))
+        self.assertIn("Mission Geometry Detail", str(payload_run[4]))
+        self.assertIn("Environmental Detail", str(payload_run[5]))
         self.assertIn("METOC Assessment", str(payload_run[13]))
         self.assertIn("Energy Storage Equivalence Lens", str(payload_run[12]))
         self.assertIn("Payload mission planning", str(payload_run[11]))
-        self.assertIn("Conservative planning energy", str(payload_run[11]))
-        self.assertIn("Conservative energy margin", str(payload_run[11]))
+        executive_summary = self._executive_summary_text(payload_run[11])
+        self.assertIn("Executive Results Summary", executive_summary)
+        self.assertIn("100 Monte Carlo trials", executive_summary)
+        self.assertIn("using deterministic seed 12345", executive_summary)
+        self.assertIn("mission-total energy", executive_summary)
+        self.assertIn("planning energy demand", executive_summary)
+        self.assertIn("conservative demand", executive_summary)
+        self.assertIn("P50", executive_summary)
+        self.assertIn("P80", executive_summary)
+        self.assertIn("P95", executive_summary)
+        self.assertNotIn("None", executive_summary)
+        self.assertIn("Planning energy P80", str(payload_run[11]))
+        self.assertIn("Conservative energy P95", str(payload_run[11]))
+        self.assertIn("Battery sets P80", str(payload_run[11]))
+        self.assertIn("Battery sets P95", str(payload_run[11]))
         self.assertNotIn("dry-weight", str(payload_run[4]).lower())
         self.assertNotIn("dry weight", str(payload_run[4]).lower())
         self.assertIn("Kilocalories", str(payload_run[12]))
@@ -361,6 +429,11 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertNotIn("0.0 GJ", str(payload_run[12]))
         self.assertEqual(payload_run[8]["visible"], True)
         self.assertIsNotNone(payload_run[8]["value"])
+        self.assertIn("Mission Visual Summary", "Mission Visual Summary")
+        payload_legend = payload_run[8]["value"].axes[0].get_legend()
+        self.assertIsNotNone(payload_legend)
+        self.assertIn("Current vector", [text.get_text() for text in payload_legend.get_texts()])
+        self.assertNotIn("Current", [text.get_text() for text in payload_run[8]["value"].axes[0].texts])
         self.assertEqual(payload_run[9]["visible"], False)
         self.assertEqual(payload_run[10]["sustainment_planning_weeks"], 1.0)
         self.assertEqual(payload_run[10]["sustainment_total_missions"], 1.0)
@@ -392,6 +465,12 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertEqual(isr_run[10]["isr_patrol_geometry"], "line")
         self.assertEqual(isr_run[10]["mission_sequences"], 1)
         self.assertEqual(isr_run[8]["visible"], True)
+        isr_legend = isr_run[8]["value"].axes[0].get_legend()
+        self.assertIsNotNone(isr_legend)
+        isr_labels = [text.get_text() for text in isr_legend.get_texts()]
+        self.assertIn("ISR patrol route", isr_labels)
+        self.assertIn("Current vector", isr_labels)
+        self.assertNotIn("Return leg", isr_labels)
         self.assertEqual(isr_run[9]["visible"], False)
 
     def test_view_results_button_calls_results_tab_helper(self) -> None:
@@ -481,7 +560,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
             1,
             True,
             1,
-            "12345",
+            "",
             0.5,
             90,
             25,
@@ -514,7 +593,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
             1,
             True,
             1,
-            "12345",
+            "",
             0.5,
             90,
             25,
@@ -588,7 +667,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
             1,
             True,
             1,
-            "12345",
+            "",
             0.5,
             90,
             25,
@@ -601,6 +680,9 @@ class AppCallbackSmokeTests(unittest.TestCase):
         )
         self.assertIn("standard_assumption", str(result[5]))
         self.assertIn("standard seawater assumption used", str(result[5]))
+        executive_summary = self._executive_summary_text(result[11])
+        self.assertIn("without a fixed deterministic seed", executive_summary)
+        self.assertNotIn("None", executive_summary)
 
 
 if __name__ == "__main__":
