@@ -127,6 +127,204 @@ def build_report_table_html(rows: list[tuple[object, ...]], title: str | None = 
     """
 
 
+def build_detail_section_html(
+    rows: list[tuple[object, ...]],
+    title: str,
+    note: str = "",
+    helper_html: str = "",
+) -> str:
+    """Render a detail section with a short interpretation note, helper visual, and table."""
+    table_html = build_report_table_html(rows, None)
+    if not table_html:
+        return ""
+    note_html = f"<p class='section-note'>{escape(note)}</p>" if note else ""
+    table_inner = table_html.replace("<div class='uuv-card full-width-card'>", "<div class='detail-table-wrap'>", 1)
+    return f"""
+    <div class='uuv-card full-width-card detail-section-card'>
+      <h3>{escape(title)}</h3>
+      {note_html}
+      {helper_html}
+      {table_inner}
+    </div>
+    """
+
+
+def _mini_marker(label: str, value: float, maximum: float, color: str) -> str:
+    """Render one marker inside a compact mini bar."""
+    if maximum <= 0:
+        return ""
+    pct = min(max(value / maximum * 100.0, 0.0), 100.0)
+    return (
+        f"<span class='mini-marker' style='left:{pct:.1f}%; border-color:{color};'>"
+        f"<span>{escape(label)}</span></span>"
+    )
+
+
+def build_energy_detail_helper(summary: dict[str, object]) -> str:
+    """Render a compact P50/P80/P95 uncertainty range helper."""
+    p50 = _as_float(summary.get("p50_energy_kwh"))
+    p80 = _as_float(summary.get("p80_energy_kwh"))
+    p95 = _as_float(summary.get("p95_energy_kwh"))
+    values = [value for value in (p50, p80, p95) if value is not None]
+    if len(values) < 2 or max(values) <= 0:
+        return ""
+    maximum = max(values) * 1.15
+    markers = "".join(
+        marker
+        for marker in (
+            _mini_marker("P50", p50 or 0.0, maximum, "#60a5fa"),
+            _mini_marker("P80", p80 or 0.0, maximum, "#fbbf24"),
+            _mini_marker("P95", p95 or 0.0, maximum, "#f87171"),
+        )
+        if marker
+    )
+    return (
+        "<div class='section-insight-card mini-range-card'>"
+        "<div class='mini-title'>Energy uncertainty spread</div>"
+        f"<div class='mini-bar mini-range'>{markers}</div>"
+        f"<div class='mini-caption'>Expected {fmt1(p50)} kWh | Planning {fmt1(p80)} kWh | Conservative {fmt1(p95)} kWh</div>"
+        "</div>"
+    )
+
+
+def build_battery_detail_helper(summary: dict[str, object]) -> str:
+    """Render planning/conservative demand against usable inventory."""
+    total = _as_float(summary.get("total_available_kwh"))
+    p80 = _as_float(summary.get("p80_energy_kwh"))
+    p95 = _as_float(summary.get("p95_energy_kwh"))
+    if not total or total <= 0 or p80 is None:
+        return ""
+    p80_pct = min(max(p80 / total * 100.0, 0.0), 100.0)
+    p95_pct = min(max((p95 or p80) / total * 100.0, 0.0), 100.0)
+    return (
+        "<div class='section-insight-card'>"
+        "<div class='mini-title'>Usable inventory coverage</div>"
+        f"<div class='mini-bar'><span class='mini-fill planning' style='width:{p80_pct:.1f}%'></span></div>"
+        f"<div class='mini-bar secondary'><span class='mini-fill conservative' style='width:{p95_pct:.1f}%'></span></div>"
+        f"<div class='mini-caption'>P80 uses {fmt1(p80_pct)}% of inventory; P95 uses {fmt1(p95_pct)}%.</div>"
+        "</div>"
+    )
+
+
+def build_sustainment_projection_helper(summary: dict[str, object]) -> str:
+    """Render a compact sustainment demand/input comparison."""
+    demand = _as_float(summary.get("sustainment_total_conservative_energy_kwh"))
+    generator = _as_float(summary.get("sustainment_generator_input_energy_kwh"))
+    missions = _as_float(summary.get("sustainment_total_missions"))
+    maximum = max(demand or 0.0, generator or 0.0)
+    if maximum <= 0:
+        return ""
+    demand_pct = min(max((demand or 0.0) / maximum * 100.0, 0.0), 100.0)
+    generator_pct = min(max((generator or 0.0) / maximum * 100.0, 0.0), 100.0)
+    return (
+        "<div class='section-insight-card'>"
+        "<div class='mini-title'>Projection energy flow</div>"
+        f"<div class='mini-bar'><span class='mini-fill planning' style='width:{demand_pct:.1f}%'></span></div>"
+        f"<div class='mini-bar secondary'><span class='mini-fill neutral' style='width:{generator_pct:.1f}%'></span></div>"
+        f"<div class='mini-caption'>{fmt1(missions)} projected mission(s); {fmt1(demand)} kWh demand, {fmt1(generator)} kWh generator input.</div>"
+        "</div>"
+    )
+
+
+def build_geometry_detail_helper(summary: dict[str, object]) -> str:
+    """Render a mission-specific geometry scale helper."""
+    mission_type = str(summary.get("mission_type") or "")
+    if mission_type in ISR_MISSIONS:
+        loop = _as_float(summary.get("isr_loop_distance_km"))
+        total = _as_float(summary.get("isr_total_patrol_distance_km_total_inventory"))
+        if not loop or not total:
+            return ""
+        loop_pct = min(max(loop / total * 100.0, 0.0), 100.0)
+        return (
+            "<div class='section-insight-card'>"
+            "<div class='mini-title'>Patrol-loop scale</div>"
+            f"<div class='mini-bar'><span class='mini-fill planning' style='width:{loop_pct:.1f}%'></span></div>"
+            f"<div class='mini-caption'>{fmt1(loop)} km loop compared with {fmt1(total)} km total inventory patrol coverage.</div>"
+            "</div>"
+        )
+    if mission_type in PAYLOAD_MISSIONS:
+        route = _as_float(summary.get("route_distance_km"))
+        total = _as_float(summary.get("payload_total_modeled_distance_km"))
+        if not route or not total:
+            return ""
+        route_pct = min(max(route / total * 100.0, 0.0), 100.0)
+        return (
+            "<div class='section-insight-card'>"
+            "<div class='mini-title'>Payload route burden</div>"
+            f"<div class='mini-bar'><span class='mini-fill planning' style='width:{route_pct:.1f}%'></span></div>"
+            f"<div class='mini-caption'>{fmt1(route)} km direct route within {fmt1(total)} km total modeled distance.</div>"
+            "</div>"
+        )
+    if mission_type in SEARCH_MISSIONS:
+        distance = _as_float(summary.get("search_total_distance_km") or summary.get("search_track_distance_km"))
+        area = _as_float(summary.get("total_search_area_km2"))
+        if not distance and not area:
+            return ""
+        return (
+            "<div class='section-insight-card'>"
+            "<div class='mini-title'>Search geometry burden</div>"
+            f"<div class='mini-caption'>{fmt1(area)} sq km search area with {fmt1(distance)} km estimated lane/route burden.</div>"
+            "</div>"
+        )
+    return ""
+
+
+def build_environment_detail_helper(summary: dict[str, object]) -> str:
+    """Render a fixed-scale environmental-burden gauge."""
+    segments = [
+        ("Current", _as_float(summary.get("current_uplift_pct")) or 0.0, "planning"),
+        ("Salinity", _as_float(summary.get("salinity_uplift_pct")) or 0.0, "neutral"),
+        ("Temperature", _as_float(summary.get("temperature_derating_pct") or summary.get("temp_uplift_pct")) or 0.0, "conservative"),
+    ]
+    total = sum(value for _, value, _ in segments if value > 0.0)
+    if total <= 0:
+        return (
+            "<div class='section-insight-card environmental-burden-gauge fixed-scale-gauge'>"
+            "<div class='mini-title'>Environmental burden gauge</div>"
+            "<div class='mini-caption'>No environmental uplift applied.</div>"
+            "</div>"
+        )
+    scale = 10.0 if total <= 10.0 else 20.0
+    fills = "".join(
+        f"<span class='mini-fill {css}' style='width:{min(max(value / scale * 100.0, 0.0), 100.0):.1f}%'></span>"
+        for _, value, css in segments
+        if value > 0.0
+    )
+    labels = " | ".join(f"{label} {fmt1(value)}%" for label, value, _ in segments if value > 0.0)
+    return (
+        "<div class='section-insight-card environmental-burden-gauge fixed-scale-gauge'>"
+        "<div class='mini-title'>Environmental burden gauge</div>"
+        f"<div class='mini-bar segmented fixed-scale' data-scale='{scale:.0f}'>{fills}</div>"
+        f"<div class='mini-caption'>Total environmental burden: {fmt1(total)}% on a fixed 0-{fmt1(scale, '%')} scale. {escape(labels)}</div>"
+        "</div>"
+    )
+
+
+def build_engineering_snapshot_caption(summary: dict[str, object]) -> str:
+    """Return a concise caption outside the engineering snapshot plot."""
+    mission_type = str(summary.get("mission_type") or "")
+    if mission_type in SEARCH_MISSIONS:
+        area = _as_float(summary.get("total_search_area_km2") or summary.get("search_area_km2"))
+        if area is None:
+            width = _as_float(summary.get("search_width_km"))
+            height = _as_float(summary.get("search_height_km"))
+            area = width * height if width is not None and height is not None else None
+        spacing = _as_float(summary.get("track_spacing_m"))
+        orientation = str(summary.get("recommended_track_orientation") or "")
+        lanes = _as_int(summary.get("search_lane_count"))
+        return f"Area: {fmt1(area)} sq km | Track spacing: {fmt_int(spacing)} m | Orientation: {escape(orientation)} | Lanes: {fmt_int(lanes)}"
+    if mission_type in ISR_MISSIONS:
+        return (
+            f"Loop distance: {fmt1(summary.get('isr_loop_distance_km'))} km | "
+            f"Endurance: {fmt1(summary.get('isr_total_inventory_endurance_hr'))} hr | "
+            f"Loops: {fmt_int(summary.get('isr_completed_loops_total_inventory'))}"
+        )
+    if mission_type in PAYLOAD_MISSIONS:
+        mode = "Return to start" if summary.get("payload_recovery_mode") == "return_to_start" else "One-way / no return"
+        return f"Route distance: {fmt1(summary.get('route_distance_km'))} km | Recovery mode: {mode}"
+    return ""
+
+
 def env_table_to_html(rows: list[tuple[str, object, str]], title: str = "Mission Geometry and Environmental Data") -> str:
     """Render mission/environment rows as a Gradio HTML card."""
     body = []
@@ -205,7 +403,8 @@ def _kpi_tile(label: str, value: object, note: str = "", status: str = "") -> st
 
 def _plain_status_text(summary: dict[str, object]) -> tuple[str, str]:
     """Return top-line feasibility and action-oriented recommendation."""
-    if str(summary.get("mission_type") or "") in ISR_MISSIONS:
+    mission_type = str(summary.get("mission_type") or "")
+    if mission_type in ISR_MISSIONS:
         return _isr_status_text(summary)
     p80 = _as_float(summary.get("p80_energy_kwh"))
     p95 = _as_float(summary.get("p95_energy_kwh"))
@@ -215,13 +414,23 @@ def _plain_status_text(summary: dict[str, object]) -> tuple[str, str]:
     usable_per_set = _as_float(summary.get("usable_battery_per_set_kwh"))
     sets_p95 = math.ceil(p95 / usable_per_set) if p95 is not None and usable_per_set and usable_per_set > 0 else sets_p80
     margin_p80 = (total_available - p80) if total_available is not None and p80 is not None else None
-    if sets_available is not None and sets_p95 is not None and sets_p95 <= sets_available:
-        return "Feasible", "Proceed with the current battery inventory; preserve the recorded assumptions for review."
-    if sets_available is not None and sets_p80 is not None and sets_p80 <= sets_available:
-        return "Marginal", "Mission covers the planning case, but stage extra battery or recharge support for conservative conditions."
-    if margin_p80 is not None and margin_p80 >= 0:
-        return "Marginal", "Planning energy is covered, but conservative margin is limited; avoid repeated tasking without added inventory."
-    return "Not feasible", "Add charged battery inventory, reduce route/search burden, or plan recharge/swap support before execution."
+    conservative_ok = sets_available is not None and sets_p95 is not None and sets_p95 <= sets_available
+    planning_ok = sets_available is not None and sets_p80 is not None and sets_p80 <= sets_available
+    if mission_type in PAYLOAD_MISSIONS:
+        if conservative_ok:
+            return "Feasible", "Feasible. The selected platform can complete the payload route with the declared inventory; maintain the recorded METOC and battery assumptions for review."
+        status = "Marginal" if planning_ok or (margin_p80 is not None and margin_p80 >= 0) else "Not feasible"
+        return status, f"{status}. The selected payload route exceeds the declared planning margin; reduce transit burden, add inventory, or plan recharge/swap support."
+    if mission_type in SEARCH_MISSIONS:
+        if conservative_ok:
+            return "Feasible", "Feasible. The selected platform can complete the search/MCM plan within the declared battery inventory and planning assumptions."
+        status = "Marginal" if planning_ok or (margin_p80 is not None and margin_p80 >= 0) else "Not feasible"
+        return status, f"{status}. The selected search/MCM plan exceeds declared inventory; reduce area, increase track spacing, add charged inventory, or plan recharge/swap support."
+    if conservative_ok:
+        return "Feasible", "Feasible. The selected platform can complete the mission within the declared inventory and planning assumptions."
+    if planning_ok or (margin_p80 is not None and margin_p80 >= 0):
+        return "Marginal", "Marginal. The mission covers the planning case, but conservative margin is limited; stage extra battery or recharge support."
+    return "Not feasible", "Not feasible. Add charged battery inventory, reduce mission burden, or plan recharge/swap support before execution."
 
 
 def _isr_status_text(summary: dict[str, object]) -> tuple[str, str]:
@@ -236,25 +445,32 @@ def _isr_status_text(summary: dict[str, object]) -> tuple[str, str]:
     loop_count = max(completed_total, completed_single)
     partial_km = partial_total_km if partial_total_km is not None else partial_single_km
     if loop_count >= 1:
+        if (_as_int(summary.get("battery_sets_available")) or 1) > 1 and total_distance is not None:
+            total_inventory_endurance = _as_float(summary.get("isr_total_inventory_endurance_hr"))
+            bluf = (
+                f"Feasible. One installed set supports approximately {fmt1(single_set_endurance)} hr; "
+                f"declared inventory supports approximately {fmt1(total_inventory_endurance)} hr if sequential recovery/swap is available."
+            )
+        else:
+            bluf = (
+                f"Feasible. The selected platform supports the ISR patrol for approximately {fmt1(single_set_endurance)} hr "
+                f"per installed set, completing {fmt_int(completed_single)} full loop(s) before recovery/swap."
+            )
         return (
             "Feasible",
-            (
-                f"ISR endurance is feasible for the selected patrol. One installed set supports approximately "
-                f"{fmt1(single_set_endurance)} hr, {fmt_int(completed_single)} full patrol loop(s), plus "
-                f"{fmt1(partial_single_km)} km of the next loop. Plan recovery/swap at approximately {fmt1(swap_window)} hr."
-            ),
+            bluf,
         )
     if single_set_endurance is not None and single_set_endurance > 0 and partial_km is not None and partial_km > 0:
         return (
             "Marginal",
             (
-                "ISR patrol is endurance-limited. The vehicle cannot complete one full loop, "
+                "Marginal. The selected vehicle cannot complete a full patrol loop, "
                 f"but can cover approximately {fmt1(total_distance or partial_km)} km before recovery/swap."
             ),
         )
     return (
         "Not feasible",
-        "ISR patrol is not feasible with the selected inventory and route because no meaningful patrol distance/endurance is available.",
+        "Not feasible. The selected vehicle does not provide meaningful ISR patrol endurance for the selected route and inventory.",
     )
 
 
@@ -275,7 +491,7 @@ def _metoc_risk_text(summary: dict[str, object], environment: EnvironmentData) -
 def _decision_kpis(summary: dict[str, object], environment: EnvironmentData) -> list[str]:
     """Build mission-appropriate KPI tiles for the decision brief."""
     mission_type = str(summary.get("mission_type") or "")
-    metoc_risk = _metoc_risk_text(summary, environment)
+    del environment
     if mission_type in ISR_MISSIONS:
         partial_km = _as_float(summary.get("isr_partial_loop_distance_km_total_inventory"))
         partial_pct = _as_float(summary.get("isr_remaining_partial_loop_pct"))
@@ -287,7 +503,6 @@ def _decision_kpis(summary: dict[str, object], environment: EnvironmentData) -> 
             _kpi_tile("Endurance per set", f"{fmt1(summary.get('isr_single_set_endurance_hr') or summary.get('isr_max_time_on_station_hr'))} hr"),
             _kpi_tile("Total patrol distance", f"{fmt1(summary.get('isr_total_patrol_distance_km_total_inventory') or summary.get('isr_total_patrol_distance_km_single_set'))} km"),
             _kpi_tile("Recovery/swap", f"{fmt1(summary.get('isr_swap_window_hr') or summary.get('isr_single_set_endurance_hr'))} hr"),
-            _kpi_tile("METOC risk", metoc_risk, status=metoc_risk),
         ]
     usable_per_set = _as_float(summary.get("usable_battery_per_set_kwh"))
     p80 = _as_float(summary.get("p80_energy_kwh"))
@@ -304,7 +519,6 @@ def _decision_kpis(summary: dict[str, object], environment: EnvironmentData) -> 
         _kpi_tile("Battery sets P95", fmt_int(sets_p95), status="sufficient" if sets_p95 and sets_p95 <= sets_available else "marginal"),
         _kpi_tile("Inventory margin", f"{fmt1(margin)} kWh", status="sufficient" if margin is not None and margin >= 0 else "shortfall"),
         _kpi_tile("Mission duration", f"{fmt1(summary.get('mean_duration_hr'))} hr"),
-        _kpi_tile("METOC risk", metoc_risk, status=metoc_risk),
     ]
 
 
@@ -342,72 +556,85 @@ def _dominant_factor_phrase(summary: dict[str, object], mission_type: str) -> st
     current = _as_float(summary.get("current_uplift_pct")) or 0.0
     salinity = _as_float(summary.get("salinity_uplift_pct")) or 0.0
     temp_derating = _as_float(summary.get("temperature_derating_pct")) or 0.0
-    burdens = {
-        "route/track current burden": current,
-        "salinity/buoyancy burden": salinity,
-        "cold-water battery-capacity derating": temp_derating,
-    }
-    best_label, best_value = max(burdens.items(), key=lambda item: item[1])
-    if best_value > 0.0:
-        return best_label
+    payload_weight = _as_float(summary.get("payload_weight_kg")) or 0.0
+    if mission_type in PAYLOAD_MISSIONS and str(summary.get("payload_recovery_mode") or "") == "return_to_start":
+        return "return transit distance and route current"
     payload_weight = _as_float(summary.get("payload_weight_kg")) or 0.0
     if payload_weight > 0.0:
-        return "payload trim/integration burden"
+        return "payload trim/integration burden and route current"
+    if current > 0.05:
+        return "route/track current burden"
     if mission_type in SEARCH_MISSIONS:
-        return "search area and track-spacing burden"
+        return "search area and track spacing"
     if mission_type in ISR_MISSIONS:
         return "patrol loop length and endurance-mode speed"
+    if salinity > 0.0:
+        return "salinity/buoyancy burden"
+    if temp_derating > 0.0:
+        return "battery temperature derating"
     return "mission geometry and selected vehicle energy capacity"
 
 
 def _executive_results_summary_html(summary: dict[str, object], environment: EnvironmentData) -> str:
     """Render a compact scientific executive-results summary."""
-    del environment
     mission_type = str(summary.get("mission_type") or "")
     ensemble = _monte_carlo_phrase(summary)
     seed = _seed_phrase(summary)
-    basis = _planning_basis_phrase(summary)
+    platform = str(summary.get("platform") or "the selected platform")
+    method = f"The simulation used {ensemble} {seed}; percentile outputs are retained in technical traceability."
     if mission_type in ISR_MISSIONS:
-        first = (
-            f"The simulation executed {ensemble} {seed}, evaluating ISR persistence as a "
-            f"{basis} problem with expected (P50), planning-level (P80), and conservative (P95) uncertainty views."
-        )
-        details: list[str] = []
-        endurance = _as_float(summary.get("isr_single_set_endurance_hr") or summary.get("isr_max_time_on_station_hr"))
-        loops = _as_int(summary.get("isr_completed_loops_single_set") or summary.get("isr_completed_loops_total_inventory"))
-        partial = _as_float(summary.get("isr_partial_loop_distance_km_single_set") or summary.get("isr_partial_loop_distance_km_total_inventory"))
         loop_distance = _as_float(summary.get("isr_loop_distance_km"))
         loop_time = _as_float(summary.get("isr_loop_time_hr"))
-        swap_window = _as_float(summary.get("isr_swap_window_hr") or endurance)
-        if loop_distance is not None and loop_time is not None:
-            details.append(f"the patrol loop is {fmt1(loop_distance)} km over {fmt1(loop_time)} hr")
-        if endurance is not None:
-            details.append(f"one installed set supports about {fmt1(endurance)} hr")
-        if loops is not None:
-            loop_text = f"{fmt_int(loops)} full loop(s)"
-            if partial is not None:
-                loop_text += f" plus {fmt1(partial)} km of the next loop"
-            details.append(loop_text)
-        if swap_window is not None:
-            details.append(f"recovery/swap is planned near {fmt1(swap_window)} hr")
-        second = "The results indicate " + "; ".join(details) + "." if details else ""
-    else:
+        loop_energy = _as_float(summary.get("isr_loop_energy_kwh"))
+        total_endurance = _as_float(summary.get("isr_total_inventory_endurance_hr"))
+        loops_total = _as_int(summary.get("isr_completed_loops_total_inventory"))
         first = (
-            f"The simulation executed {ensemble} {seed}, evaluating {basis} demand against selected battery "
-            f"inventory with expected (P50), planning-level (P80), and conservative (P95) uncertainty views."
+            f"The modeled ISR mission uses {platform} as a patrol-loop endurance problem: "
+            f"{fmt1(loop_distance)} km per loop, {fmt1(loop_time)} hr per loop, and {fmt1(loop_energy)} kWh per loop."
         )
+        second = (
+            f"The declared inventory supports approximately {fmt1(total_endurance)} hr and {fmt_int(loops_total)} full loop(s), "
+            f"with recovery/swap planned near the endurance window. {method}"
+        )
+    elif mission_type in SEARCH_MISSIONS:
         p80 = _as_float(summary.get("p80_energy_kwh"))
         p95 = _as_float(summary.get("p95_energy_kwh"))
-        details = []
-        if p80 is not None:
-            details.append(f"planning energy demand of {fmt1(p80)} kWh")
-        if p95 is not None:
-            details.append(f"conservative demand of {fmt1(p95)} kWh")
+        area = _as_float(summary.get("total_search_area_km2") or summary.get("search_area_km2"))
+        if area is None:
+            width = _as_float(summary.get("search_width_km"))
+            height = _as_float(summary.get("search_height_km"))
+            area = width * height if width is not None and height is not None else None
+        spacing = _as_float(summary.get("track_spacing_m"))
+        areas = _as_int(summary.get("number_of_search_areas")) or 1
         factor = _dominant_factor_phrase(summary, mission_type)
+        first = (
+            f"The modeled search/MCM mission uses {platform} across {fmt1(area)} sq km with {fmt1(spacing)} m spacing "
+            f"across {fmt_int(areas)} selected area(s)."
+        )
         second = (
-            f"The results indicate {' and '.join(details)}, with battery sufficiency driven primarily by {factor}."
-            if details
-            else f"Battery sufficiency is driven primarily by {factor}."
+            f"Planning energy is {fmt1(p80)} kWh and conservative energy is {fmt1(p95)} kWh; "
+            f"battery sufficiency is driven by {factor}, METOC burden, and selected platform energy capacity. {method}"
+        )
+    else:
+        route = _as_float(summary.get("route_distance_km"))
+        heading = _as_float(summary.get("route_heading_deg"))
+        total_distance = _as_float(summary.get("payload_total_modeled_distance_km"))
+        p80 = _as_float(summary.get("p80_energy_kwh"))
+        p95 = _as_float(summary.get("p95_energy_kwh"))
+        factor = _dominant_factor_phrase(summary, mission_type)
+        first = (
+            f"The modeled payload mission uses {platform} over a {fmt1(route)} km route on heading {fmt1(heading)} deg, "
+            "with METOC sampled at the route midpoint."
+        )
+        distance_clause = (
+            f" Return-to-start planning increases modeled distance to {fmt1(total_distance)} km."
+            if str(summary.get("payload_recovery_mode") or "") == "return_to_start" and total_distance is not None
+            else ""
+        )
+        second = (
+            f"Planning energy is {fmt1(p80)} kWh and conservative energy is {fmt1(p95)} kWh; "
+            f"battery sufficiency is primarily influenced by {factor}, declared inventory, and recovery mode."
+            f"{distance_clause} {method}"
         )
     sentences = [sentence for sentence in (first, second) if sentence and "None" not in sentence]
     text = " ".join(sentences[:2])
@@ -576,10 +803,8 @@ def build_energy_planner_summary_html(summary: dict[str, object], area: MissionA
 
     This should read as a planning product first, with reviewer detail below.
     """
-    mission_type = str(summary.get("mission_type") or "")
     status, recommendation = _plain_status_text(summary)
     kpis = _decision_kpis(summary, environment)
-    planning_note = _mission_planning_note(summary, area, environment)
     executive_summary = _executive_results_summary_html(summary, environment)
     decision_html = f"""
     <div class='uuv-card planner-summary mission-decision-brief'>
@@ -589,7 +814,6 @@ def build_energy_planner_summary_html(summary: dict[str, object], area: MissionA
         <div>
           <h3>BLUF</h3>
           <p>{escape(recommendation)}</p>
-          <p class='small-muted'>{escape(planning_note or '')}</p>
         </div>
       </div>
       {executive_summary}
@@ -610,7 +834,9 @@ def build_technical_traceability_html(summary: dict[str, object], environment: E
         ("Vehicle catalog version", VEHICLE_CATALOG_VERSION, ""),
         ("Planning basis", summary.get("planning_energy_basis"), ""),
         ("Planning percentile", summary.get("planning_percentile"), ""),
+        ("Monte Carlo runs", summary.get("monte_carlo_runs"), ""),
         ("Monte Carlo seed", summary.get("rng_seed"), ""),
+        ("Percentile output definitions", "P50 expected, P80 planning-level, P95 conservative", ""),
         ("Usable battery fraction P10", _float_or_blank(summary.get("battery_usable_fraction_p10")), ""),
         ("Usable battery fraction P50", _float_or_blank(summary.get("battery_usable_fraction_p50")), ""),
         ("Usable battery fraction P90", _float_or_blank(summary.get("battery_usable_fraction_p90")), ""),
@@ -1421,7 +1647,7 @@ def _draw_current_arrow(ax: Any, environment: EnvironmentData, bounds: tuple[flo
     )
 
 
-def _dedupe_legend(ax: Any, max_items: int = 4) -> None:
+def _dedupe_legend(ax: Any, max_items: int = 4, outside: bool = False) -> None:
     """Render a compact legend with repeated labels collapsed."""
     handles, labels = ax.get_legend_handles_labels()
     deduped: dict[str, Any] = {}
@@ -1436,7 +1662,18 @@ def _dedupe_legend(ax: Any, max_items: int = 4) -> None:
     limited = items[:max_items]
     if limited:
         labels_limited, handles_limited = zip(*[(label, handle) for label, handle in limited])
-        ax.legend(handles_limited, labels_limited, loc="upper right", fontsize=8)
+        if outside:
+            ax.legend(
+                handles_limited,
+                labels_limited,
+                loc="upper left",
+                bbox_to_anchor=(1.01, 1.0),
+                borderaxespad=0.0,
+                fontsize=7.5,
+                framealpha=0.92,
+            )
+        else:
+            ax.legend(handles_limited, labels_limited, loc="upper right", fontsize=7.5, framealpha=0.9)
 
 
 def _project_route_points(area: MissionArea) -> list[tuple[float, float]]:
@@ -1462,13 +1699,13 @@ def _draw_scale_bar(ax: Any, min_x: float, max_x: float, min_y: float, max_y: fl
     span_x = max(max_x - min_x, 0.001)
     span_y = max(max_y - min_y, 0.001)
     extent = max(span_x, span_y)
-    scale_len = min(_nice_scale_km(extent), span_x * 0.70 if span_x > 0.01 else extent * 0.45)
-    scale_x = min_x + span_x * 0.10
-    scale_y = min_y + span_y * 0.08
-    ax.plot([scale_x, scale_x + scale_len], [scale_y, scale_y], color="black", linewidth=3)
-    ax.plot([scale_x, scale_x], [scale_y - span_y * 0.015, scale_y + span_y * 0.015], color="black", linewidth=2)
-    ax.plot([scale_x + scale_len, scale_x + scale_len], [scale_y - span_y * 0.015, scale_y + span_y * 0.015], color="black", linewidth=2)
-    ax.text(scale_x + scale_len / 2, scale_y + max(span_y * 0.035, 0.03), f"{scale_len:.3g} km", ha="center", va="bottom", fontsize=8.5)
+    scale_len = min(_nice_scale_km(extent) * 0.75, span_x * 0.45 if span_x > 0.01 else extent * 0.35)
+    scale_x = min_x + span_x * 0.08
+    scale_y = min_y + span_y * 0.05
+    ax.plot([scale_x, scale_x + scale_len], [scale_y, scale_y], color="black", linewidth=2, alpha=0.72)
+    ax.plot([scale_x, scale_x], [scale_y - span_y * 0.010, scale_y + span_y * 0.010], color="black", linewidth=1.4, alpha=0.72)
+    ax.plot([scale_x + scale_len, scale_x + scale_len], [scale_y - span_y * 0.010, scale_y + span_y * 0.010], color="black", linewidth=1.4, alpha=0.72)
+    ax.text(scale_x + scale_len / 2, scale_y + max(span_y * 0.026, 0.02), f"{scale_len:.3g} km", ha="center", va="bottom", fontsize=7, alpha=0.78)
 
 
 def _draw_north_arrow(ax: Any, min_x: float, max_x: float, min_y: float, max_y: float) -> None:
@@ -1476,11 +1713,11 @@ def _draw_north_arrow(ax: Any, min_x: float, max_x: float, min_y: float, max_y: 
     span_x = max(max_x - min_x, 0.001)
     span_y = max(max_y - min_y, 0.001)
     extent = max(span_x, span_y)
-    north_x = min_x + span_x * 0.10
-    north_y = min_y + span_y * 0.70
-    north_len = max(span_y * 0.16, extent * 0.08)
-    ax.arrow(north_x, north_y, 0, north_len, length_includes_head=True, head_width=max(extent * 0.025, 0.025), head_length=max(extent * 0.040, 0.035), linewidth=1.6, color="black")
-    ax.text(north_x, north_y + north_len + max(extent * 0.025, 0.02), "N", ha="center", va="bottom", fontsize=10, fontweight="bold")
+    north_x = max_x - span_x * 0.08
+    north_y = max_y - span_y * 0.22
+    north_len = min(max(span_y * 0.13, extent * 0.035), span_y * 0.24)
+    ax.arrow(north_x, north_y, 0, north_len, length_includes_head=True, head_width=max(extent * 0.015, 0.016), head_length=max(extent * 0.024, 0.020), linewidth=1.1, color="black", alpha=0.78)
+    ax.text(north_x, north_y + north_len + max(span_y * 0.018, 0.012), "N", ha="center", va="bottom", fontsize=8, fontweight="bold", alpha=0.82)
 
 
 def _style_snapshot_axes(ax: Any) -> None:
@@ -1542,7 +1779,7 @@ def _set_limits(ax: Any, points: list[tuple[float, float]], equal_aspect: bool) 
 
 def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea | MissionAreaSet, environment: EnvironmentData, track_spacing_m: float) -> Any:
     """Render the report map snapshot panel."""
-    fig, ax = plt.subplots(figsize=(6.7, 5.6), dpi=120)
+    fig, ax = plt.subplots(figsize=(8.0, 4.8), dpi=120)
     mission_type = str(summary.get("mission_type", ""))
     _style_snapshot_axes(ax)
 
@@ -1567,7 +1804,7 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea |
             fontsize=8,
             wrap=True,
         )
-        ax.set_title("Payload Route and Current Snapshot", pad=10, fontsize=13)
+        ax.set_title("Engineering Snapshot - Payload Route", pad=10, fontsize=13)
         _dedupe_legend(ax, max_items=4)
         fig.tight_layout(rect=(0, 0.06, 1, 1))
         return fig
@@ -1588,7 +1825,7 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea |
         _draw_current_arrow(ax, environment, bounds)
         _draw_north_arrow(ax, *bounds)
         _draw_scale_bar(ax, *bounds)
-        ax.set_title("ISR Patrol Route Snapshot", pad=10, fontsize=13)
+        ax.set_title("Engineering Snapshot - ISR Patrol", pad=10, fontsize=13)
         fig.text(
             0.5,
             0.025,
@@ -1644,7 +1881,7 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea |
         _draw_current_arrow(ax, environment, bounds)
         _draw_north_arrow(ax, *bounds)
         _draw_scale_bar(ax, *bounds)
-        ax.set_title("Multi-Area Search Plan Snapshot", pad=10, fontsize=13)
+        ax.set_title("Engineering Snapshot - Search Area", pad=10, fontsize=13)
         _dedupe_legend(ax, max_items=4)
         fig.text(
             0.5,
@@ -1677,21 +1914,19 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea |
     if area.centroid_local_km:
         ax.scatter([area.centroid_local_km.x], [area.centroid_local_km.y], s=34, marker="o", color="#111827", zorder=5)
     shape_label = "Polygon" if area.geometry_type == "polygon" else "Rectangle"
-    ax.set_title(f"Search Area and Swath Pattern Snapshot: {shape_label}", pad=10, fontsize=13)
-    ax.text(0.01, -0.18, f"Swath/track spacing: {fmt_int(track_spacing_m)} m | Recommended orientation: {orientation} | Planning snapshot only", transform=ax.transAxes, fontsize=8, va="top")
-    ax.text(0.99, -0.18, f"Lanes: {lanes.get('lane_count', 0)}", transform=ax.transAxes, ha="right", fontsize=8, va="top")
+    ax.set_title(f"Engineering Snapshot - Search Area: {shape_label}", pad=10, fontsize=13)
     ax.text(
         0.99,
-        0.02,
-        f"Area: {fmt1(area.area_km2 or 0)} sq km\nBounding box: {fmt1(area.width_km or 0)} x {fmt1(area.height_km or 0)} km",
+        0.04,
+        f"Area: {fmt1(area.area_km2 or 0)} sq km\nBox: {fmt1(area.width_km or 0)} x {fmt1(area.height_km or 0)} km",
         transform=ax.transAxes,
         ha="right",
         va="bottom",
-        fontsize=9,
-        bbox=dict(boxstyle="round,pad=0.35", facecolor="#eef2f7", edgecolor="#94a3b8", alpha=0.95),
+        fontsize=7.5,
+        bbox=dict(boxstyle="round,pad=0.25", facecolor="#eef2f7", edgecolor="#94a3b8", alpha=0.82),
     )
-    _dedupe_legend(ax, max_items=4)
-    fig.tight_layout()
+    _dedupe_legend(ax, max_items=3, outside=True)
+    fig.tight_layout(rect=(0, 0, 0.84, 1))
     return fig
 
 

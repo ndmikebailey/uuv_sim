@@ -7,18 +7,25 @@ from typing import Any
 
 import gradio as gr
 
-from app.components.map_iframe import build_leaflet_iframe
+from app.components.map_iframe import build_leaflet_iframe, build_report_map_overlay_iframe
 from app.ui.reporting import (
     build_battery_sustainment_rows,
+    build_battery_detail_helper,
+    build_detail_section_html,
     build_distribution_chart,
     build_energy_equivalence_rows,
+    build_energy_detail_helper,
     build_energy_planner_summary_html,
     build_report_table_html,
     build_energy_time_chart,
     build_energy_summary_rows,
+    build_engineering_snapshot_caption,
+    build_environment_detail_helper,
     build_environmental_input_rows,
+    build_geometry_detail_helper,
     build_mapping_snapshot_chart,
     build_mission_geometry_summary_rows,
+    build_sustainment_projection_helper,
     build_sustainment_projection_rows,
     context_markdown,
     env_table_to_html,
@@ -91,6 +98,51 @@ CUSTOM_CSS = """
 }
 .executive-results-title { color: #cbd5e1; font-size: 12px; font-weight: 800; text-transform: uppercase; }
 .executive-results-text { color: #e5e7eb; font-size: 13px; line-height: 1.45; margin: 5px 0 0 0; }
+.detail-section-card h3 { margin-bottom: 6px; }
+.section-note { color: #cbd5e1; font-size: 13px; line-height: 1.45; margin: 0 0 10px 0; }
+.detail-table-wrap { margin-top: 10px; }
+.section-insight-card {
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.55);
+  padding: 10px 12px;
+  margin: 8px 0 10px 0;
+}
+.mini-title { color: #cbd5e1; font-size: 12px; font-weight: 800; margin-bottom: 8px; }
+.mini-caption { color: #e5e7eb; font-size: 12px; margin-top: 7px; }
+.mini-bar { position: relative; height: 14px; border-radius: 999px; overflow: hidden; background: #1f2937; border: 1px solid #475569; }
+.mini-bar.secondary { margin-top: 6px; opacity: 0.92; }
+.mini-range { height: 24px; overflow: visible; margin: 16px 4px 20px 4px; }
+.mini-fill { display: inline-block; height: 100%; vertical-align: top; background: #60a5fa; }
+.mini-fill.planning { background: #60a5fa; }
+.mini-fill.conservative { background: #f87171; }
+.mini-fill.neutral { background: #94a3b8; }
+.mini-marker { position: absolute; top: -5px; height: 32px; border-left: 2px solid #e5e7eb; }
+.mini-marker span { position: absolute; top: 30px; left: -12px; color: #cbd5e1; font-size: 10px; font-weight: 800; }
+.report-plot label { display: none !important; }
+.report-visual-grid { gap: 12px; }
+.report-visual-card, .report-plot {
+  width: 100%;
+  min-height: 470px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.report-map-card {
+  border: 1px solid #374151;
+  border-radius: 12px;
+  padding: 12px;
+  background: #111827;
+}
+.report-map-card h3 { margin: 0 0 10px 0; }
+.report-map-card iframe { width: 100%; min-height: 410px; }
+.report-map-unavailable { min-height: 0; color: #cbd5e1; font-size: 13px; }
+.engineering-snapshot-caption {
+  color: #cbd5e1;
+  font-size: 12px;
+  margin-top: -6px;
+  padding: 0 4px 8px 4px;
+}
 .traceability-detail { margin: 10px 0; }
 .traceability-detail summary { cursor: pointer; font-weight: 800; padding: 10px 0; }
 .metoc-assessment, .metoc-panel, .metoc-card-grid { width: 100%; max-width: none; }
@@ -124,54 +176,10 @@ CUSTOM_CSS = """
   font-size: 12px;
   margin: -4px 0 10px 0;
 }
-.view-results-btn {
-  border: none;
-  border-radius: 10px;
-  padding: 10px 18px;
-  font-weight: 700;
-  cursor: pointer;
-  margin-top: 8px;
-}
-.view-results-btn.disabled {
-  background: #555;
-  color: #bbb;
-  cursor: not-allowed;
-}
-.view-results-btn.active {
-  background: #d86b6b;
-  color: #ffffff;
-  cursor: pointer;
-}
 """
 
 CUSTOM_JS = """
 function() {
-  function findTabByText(words) {
-    const candidates = Array.from(document.querySelectorAll('button, [role="tab"], .tabitem button'));
-    return candidates.find((el) => {
-      if (el.classList.contains("view-results-btn")) return false;
-      const text = (el.innerText || el.textContent || "").trim().toLowerCase();
-      return words.some((word) => text.includes(word));
-    });
-  }
-  window.goToResultsTab = function goToResultsTab() {
-    const target = findTabByText(["results", "report"]);
-    if (target) {
-      target.click();
-    }
-    setTimeout(() => {
-      const anchor = document.querySelector("#results-anchor");
-      if (anchor) {
-        anchor.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-    }, 400);
-  };
-  window.goToSimulatorTab = function goToSimulatorTab() {
-    const target = findTabByText(["single-uuv", "simulator"]);
-    if (target) {
-      target.click();
-    }
-  };
   function setGeometryBox(text) {
     const box = document.querySelector('#geometry_json_box textarea');
     if (!box) return;
@@ -205,43 +213,15 @@ BUILD_MISSION_JS = """
 }
 """
 
-BUILD_MISSION_AND_GO_JS = """
-(missionType, geometryText) => {
-  let text = geometryText || "";
-  if (!text.trim()) {
-    try {
-      const iframe = document.querySelector('#uuv_map_iframe');
-      const raw = iframe && iframe.contentWindow && iframe.contentWindow.document.getElementById('raw_output');
-      if (raw && (raw.innerText || raw.textContent || "").trim()) {
-        text = raw.innerText || raw.textContent || "";
-      }
-    } catch (e) {
-      console.log("Could not read map iframe geometry output", e);
-    }
-  }
-  setTimeout(() => {
-    if (window.goToSimulatorTab) {
-      window.goToSimulatorTab();
-    }
-  }, 800);
-  return [missionType, text];
-}
-"""
-
-DEFAULT_RESULTS_BUTTON_HTML = """
-<button class="view-results-btn disabled" disabled>
-  View Results
-</button>
-"""
-
-ACTIVE_RESULTS_BUTTON_HTML = """
-<button class="view-results-btn active" onclick="goToResultsTab()">
-  View Results
-</button>
-<div class="small-muted">Go to Results tab. Your simulation is ready.</div>
-"""
+DEFAULT_RESULTS_BUTTON_UPDATE = gr.update(value="Go to Results", interactive=False)
+ACTIVE_RESULTS_BUTTON_UPDATE = gr.update(value="Go to Results", interactive=True)
 
 MISSION_READY_FOR_SIM_TEXT = "Now that mission parameters are set, go to UUV simulation."
+
+
+def select_workflow_tab(tab_id: str) -> Any:
+    """Select a top-level workflow tab through Gradio state instead of DOM clicks."""
+    return gr.update(selected=tab_id)
 
 
 def mission_builder_visibility(mission_type: str) -> tuple[Any, Any]:
@@ -290,6 +270,57 @@ def sustainment_projection_visibility(enabled: bool) -> Any:
 def refresh_map(region: str) -> str:
     """Refresh the Leaflet map iframe for the selected region."""
     return build_leaflet_iframe(region)
+
+
+def _metoc_points_from_environment(environment: EnvironmentData) -> list[dict[str, float]]:
+    """Return report-map METOC point dictionaries from traced query params."""
+    points: list[dict[str, float]] = []
+    for params in (environment.marine_query_params, environment.weather_query_params):
+        if not params:
+            continue
+        lat = safe_float(params.get("latitude"))
+        lon = safe_float(params.get("longitude"))
+        if lat is None or lon is None:
+            continue
+        point = {"lat": float(lat), "lon": float(lon)}
+        if point not in points:
+            points.append(point)
+    return points
+
+
+def _report_map_overlay_update(
+    context: dict[str, Any] | None,
+    mission_type: str,
+    environment: EnvironmentData,
+) -> Any:
+    """Build the optional report map overlay only for loaded GPS geometry."""
+    if not context:
+        return gr.update(value="", visible=False)
+    geometry = context.get("source_geometry_json")
+    if not isinstance(geometry, str) or not geometry.strip():
+        return gr.update(value="", visible=False)
+    try:
+        import json
+
+        geometry_payload = json.loads(geometry)
+    except (TypeError, ValueError):
+        return gr.update(
+            value="<div class='report-visual-card report-map-card report-map-unavailable'>Map overlay unavailable; engineering geometry snapshot shown.</div>",
+            visible=True,
+        )
+    overlay = build_report_map_overlay_iframe(
+        geometry_payload,
+        mission_type,
+        safe_float(environment.current_speed_kts_mean),
+        safe_float(environment.current_direction_deg_mean),
+        _metoc_points_from_environment(environment),
+    )
+    if not overlay:
+        return gr.update(
+            value="<div class='report-visual-card report-map-card report-map-unavailable'>Map overlay unavailable; engineering geometry snapshot shown.</div>",
+            visible=True,
+        )
+    return gr.update(value=overlay, visible=True)
 
 
 def build_mission_and_prefill(mission_type: str, geometry_json_text: str) -> tuple[Any, ...]:
@@ -470,7 +501,7 @@ def run_from_ui(
     except ValueError as exc:
         return (
             f"Invalid seed: {exc}",
-            DEFAULT_RESULTS_BUTTON_HTML,
+            DEFAULT_RESULTS_BUTTON_UPDATE,
             gr.update(),
             gr.update(),
             gr.update(),
@@ -479,6 +510,7 @@ def run_from_ui(
             gr.update(),
             gr.update(),
             gr.update(value=None, visible=False),
+            gr.update(),
             gr.update(),
             gr.update(value=None),
             gr.update(value=None),
@@ -583,18 +615,42 @@ def run_from_ui(
         "generator_efficiency": safe_float(generator_efficiency, 0.84) or 0.84,
     }
     summary["sustainment_projection_enabled"] = bool(sustainment_projection_enabled)
-    energy_summary_html = build_report_table_html(build_energy_summary_rows(summary), "Energy Detail")
-    battery_sustainment_html = (
-        build_report_table_html(build_battery_sustainment_rows(summary), "Battery and Sustainment Detail")
-        + build_report_table_html(build_sustainment_projection_rows(summary), "Sustainment Projection Lens")
+    energy_summary_html = build_detail_section_html(
+        build_energy_summary_rows(summary),
+        "Energy Detail",
+        "Energy detail compares expected, planning, and conservative estimates while preserving the mission duration and environmental uplift basis.",
+        build_energy_detail_helper(summary),
     )
-    mission_geometry_html = build_report_table_html(
+    battery_sustainment_html = (
+        build_detail_section_html(
+            build_battery_sustainment_rows(summary),
+            "Battery and Sustainment Detail",
+            "Battery sufficiency compares planning and conservative mission energy against usable inventory energy after reserve, temperature, and battery-condition assumptions.",
+            build_battery_detail_helper(summary),
+        )
+        + build_detail_section_html(
+            build_sustainment_projection_rows(summary),
+            "Sustainment Projection Lens",
+            "The sustainment lens is an energy-flow projection for the selected horizon and operations tempo.",
+            build_sustainment_projection_helper(summary),
+        )
+    )
+    geometry_note = (
+        "ISR persistence is evaluated by patrol-loop endurance. Total inventory values assume sequential use of available charged battery sets."
+        if mission_type in ISR_MISSIONS
+        else "Mission geometry defines the route, search, or payload burden used by the energy model."
+    )
+    mission_geometry_html = build_detail_section_html(
         build_mission_geometry_summary_rows(summary, area, environment, simulation_inputs),
         "Mission Geometry Detail",
+        geometry_note,
+        build_geometry_detail_helper(summary),
     )
-    environmental_inputs_html = build_report_table_html(
+    environmental_inputs_html = build_detail_section_html(
         build_environmental_input_rows(summary, environment),
         "Environmental Detail",
+        "Environmental burden is applied as a planning modifier; Open-Meteo values support planning context and are not tactical METOC authority.",
+        build_environment_detail_helper(summary),
     )
     equivalence_energy_kwh, equivalence_basis = _energy_equivalence_planning_basis(summary)
     energy_equivalence_html = build_report_table_html(
@@ -612,8 +668,11 @@ def run_from_ui(
     )
     fig_dist = build_distribution_chart(result.energy_samples_kwh, float(summary["p80_energy_kwh"]), float(summary["total_available_kwh"]), mission_type=mission_type)
     fig_snapshot = build_mapping_snapshot_chart(summary, area, environment, safe_float(track_spacing_m, 200.0) or 200.0)
+    engineering_snapshot_caption = (
+        f"<div class='engineering-snapshot-caption'>{build_engineering_snapshot_caption(summary)}</div>"
+    )
     primary_visual_update = gr.update(value=fig_snapshot, visible=True)
-    overlay_update = gr.update(value=None, visible=False)
+    overlay_update = _report_map_overlay_update(context, mission_type, environment)
     source_geometry_json = context.get("source_geometry_json") if context else None
     _json_record_path, _csv_record_path = write_run_record(
         mission_type=mission_type,
@@ -627,7 +686,7 @@ def run_from_ui(
     )
     return (
         status,
-        ACTIVE_RESULTS_BUTTON_HTML,
+        ACTIVE_RESULTS_BUTTON_UPDATE,
         energy_summary_html,
         battery_sustainment_html,
         mission_geometry_html,
@@ -640,6 +699,7 @@ def run_from_ui(
         build_energy_planner_summary_html(summary, area, environment, vehicle),
         energy_equivalence_html,
         metoc_html(environment, METOC_SERVICE),
+        engineering_snapshot_caption,
     )
 
 
@@ -673,106 +733,114 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
         )
         gr.Markdown(f"<div class='build-label'>Current dev build: {APP_VERSION}</div>")
 
-        with gr.Tab("1. Mission Builder"):
-            with gr.Row():
-                with gr.Column(scale=1):
-                    gr.Markdown("### Mission Setup")
-                    mission_type_builder = gr.Dropdown(MISSION_TYPES, value="ISR", label="Mission type")
-                    region_select = gr.Dropdown(list(REGION_PRESETS.keys()), value="Guam", label="Operating region")
-                    refresh_map_btn = gr.Button("Refresh Map Region")
-                    search_note = gr.Markdown("Draw a **line, rectangle, or polygon** for ISR; draw a **rectangle or polygon** for Area Search / MCM.", visible=True)
-                    payload_note = gr.Markdown("Draw a **line** from drop point / launch point to target site.", visible=False)
-                    geometry_json = gr.Textbox(label="Map geometry", lines=1, visible=False, elem_id="geometry_json_box")
-                    build_fetch_btn = gr.Button("Build Mission and Load Environment", variant="primary")
-                    build_go_sim_btn = gr.Button("Load Mission and Go to Simulator")
-                    mission_status = gr.Textbox(label="Mission Builder Status", lines=3, interactive=False)
-                with gr.Column(scale=2):
-                    map_html = gr.HTML(value=build_leaflet_iframe("Guam"), label="Mission Map")
+        with gr.Tabs(selected="builder", elem_id="workflow-tabs") as workflow_tabs:
+            with gr.Tab("1. Mission Builder", id="builder"):
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        gr.Markdown("### Mission Setup")
+                        mission_type_builder = gr.Dropdown(MISSION_TYPES, value="ISR", label="Mission type")
+                        region_select = gr.Dropdown(list(REGION_PRESETS.keys()), value="Guam", label="Operating region")
+                        refresh_map_btn = gr.Button("Refresh Map Region")
+                        search_note = gr.Markdown("Draw a **line, rectangle, or polygon** for ISR; draw a **rectangle or polygon** for Area Search / MCM.", visible=True)
+                        payload_note = gr.Markdown("Draw a **line** from drop point / launch point to target site.", visible=False)
+                        geometry_json = gr.Textbox(label="Map geometry", lines=1, visible=False, elem_id="geometry_json_box")
+                        build_fetch_btn = gr.Button("Build Mission and Load Environment", variant="primary")
+                        build_go_sim_btn = gr.Button("Go to UUV Simulator")
+                        mission_status = gr.Textbox(label="Mission Builder Status", lines=3, interactive=False)
+                    with gr.Column(scale=2):
+                        map_html = gr.HTML(value=build_leaflet_iframe("Guam"), label="Mission Map")
 
-            mission_env_html = gr.HTML(value=env_table_to_html(empty_rows), label="Mission Geometry and Environmental Data")
-            env_table = gr.Dataframe(value=empty_df, label="Mission Geometry and Environmental Data Raw Table", interactive=False, wrap=True, visible=False)
+                mission_env_html = gr.HTML(value=env_table_to_html(empty_rows), label="Mission Geometry and Environmental Data")
+                env_table = gr.Dataframe(value=empty_df, label="Mission Geometry and Environmental Data Raw Table", interactive=False, wrap=True, visible=False)
 
-        with gr.Tab("2. Single-UUV Simulator"):
-            mission_loaded_md = gr.Markdown("No mission context loaded. You can still run the simulator with manual inputs.")
-            with gr.Row():
-                with gr.Column(scale=1):
-                    gr.Markdown("### UUV Profile")
-                    platform_select = gr.Dropdown(list(VEHICLE_CATALOG.keys()), value="REMUS 300 - 4.5 kWh", label="UUV platform")
-                    speed_default, info_default = platform_defaults("REMUS 300 - 4.5 kWh")
-                    platform_info = gr.Textbox(label="Platform baseline", lines=5, interactive=False, value=info_default)
-                    mission_type_sim = gr.Dropdown(MISSION_TYPES, value="ISR", label="Mission type")
-                    speed_kts = gr.Number(label="Vehicle speed through water, kts", value=speed_default)
-                    battery_sets_available = gr.Number(label="Battery sets on hand", value=1, precision=0)
-                    battery_condition = gr.Dropdown(["Low", "Medium", "High"], value="Medium", label="Battery condition / starting efficiency")
-                    recharge_allowed = gr.Checkbox(label="Recharge / battery swap allowed if required", value=True)
-                    mission_sequences = gr.Number(label="Mission sequences (payload/search only)", value=1, precision=0, visible=False)
-                    rng_seed = gr.Textbox(label="Monte Carlo random seed, optional", placeholder="Leave blank to generate and record a seed")
-                    gr.Markdown("### Environment")
-                    current_mean = gr.Number(label="Current speed mean, kts", value=0.5)
-                    current_dir = gr.Number(label="Current direction mean, deg", value=0)
-                    temp_mean = gr.Number(label="Sea surface temperature mean, deg C", value=25)
+            with gr.Tab("2. Single-UUV Simulator", id="simulator"):
+                mission_loaded_md = gr.Markdown("No mission context loaded. You can still run the simulator with manual inputs.")
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        gr.Markdown("### UUV Profile")
+                        platform_select = gr.Dropdown(list(VEHICLE_CATALOG.keys()), value="REMUS 300 - 4.5 kWh", label="UUV platform")
+                        speed_default, info_default = platform_defaults("REMUS 300 - 4.5 kWh")
+                        platform_info = gr.Textbox(label="Platform baseline", lines=5, interactive=False, value=info_default)
+                        mission_type_sim = gr.Dropdown(MISSION_TYPES, value="ISR", label="Mission type")
+                        speed_kts = gr.Number(label="Vehicle speed through water, kts", value=speed_default)
+                        battery_sets_available = gr.Number(label="Battery sets on hand", value=1, precision=0)
+                        battery_condition = gr.Dropdown(["Low", "Medium", "High"], value="Medium", label="Battery condition / starting efficiency")
+                        recharge_allowed = gr.Checkbox(label="Recharge / battery swap allowed if required", value=True)
+                        mission_sequences = gr.Number(label="Mission sequences (payload/search only)", value=1, precision=0, visible=False)
+                        rng_seed = gr.Textbox(label="Monte Carlo random seed, optional", placeholder="Leave blank to generate and record a seed")
+                        gr.Markdown("### Environment")
+                        current_mean = gr.Number(label="Current speed mean, kts", value=0.5)
+                        current_dir = gr.Number(label="Current direction mean, deg", value=0)
+                        temp_mean = gr.Number(label="Sea surface temperature mean, deg C", value=25)
 
-                with gr.Column(scale=1):
-                    search_group = gr.Group(visible=False)
-                    with search_group:
-                        gr.Markdown("### Search Mission Inputs")
-                        manual_area_km2 = gr.Number(label="Mission search area, sq km", value=10)
-                        width_km = gr.Number(label="Search area width, km", value=3, visible=False)
-                        height_km = gr.Number(label="Search area height, km", value=3, visible=False)
-                        track_spacing_m = gr.Number(label="Swath lane width / track spacing, meters", value=200)
-                        gr.Markdown("The app calculates lanes, track length, turn burden, and recommended orientation in the background.")
-                    isr_group = gr.Group(visible=True)
-                    with isr_group:
-                        gr.Markdown("### ISR Persistence Inputs")
-                        gr.Markdown("ISR uses the loaded patrol route or perimeter and reports maximum endurance-based time on station.")
-                    payload_group = gr.Group(visible=False)
-                    with payload_group:
-                        gr.Markdown("### Payload Delivery Inputs")
-                        route_distance_km = gr.Number(label="Route distance, km", value=10)
-                        route_heading_deg = gr.Number(label="Route heading, deg", value=0)
-                        payload_weight = gr.Number(label="Payload weight, kg", value=0)
-                        gr.Markdown("Optional payload mass carried by the UUV. Used as a small trim/integration planning burden. Leave 0 if unknown.")
-                        return_to_start = gr.Checkbox(label="Vehicle returns to start after delivery", value=True)
-                    additional_transit_km = gr.Number(label="Additional transit distance, km", value=0)
-                    sustainment_projection_enabled = gr.Checkbox(label="Mission sustainment projection lens", value=False)
-                    sustainment_projection_group = gr.Group(visible=False)
-                    with sustainment_projection_group:
-                        gr.Markdown("### Sustainment Projection")
-                        operations_per_week = gr.Number(label="Operations per week", value=1)
-                        planning_duration = gr.Dropdown(["1 week", "1 month", "3 months"], value="1 week", label="Planning duration")
-                        generator_efficiency = gr.Number(label="Generator efficiency", value=0.84)
-                    run_btn = gr.Button("Run UUV Energy Simulation", variant="primary")
-                    run_status = gr.Textbox(label="Run Status", lines=4, interactive=False)
-                    view_results_button = gr.HTML(DEFAULT_RESULTS_BUTTON_HTML)
+                    with gr.Column(scale=1):
+                        search_group = gr.Group(visible=False)
+                        with search_group:
+                            gr.Markdown("### Search Mission Inputs")
+                            manual_area_km2 = gr.Number(label="Mission search area, sq km", value=10)
+                            width_km = gr.Number(label="Search area width, km", value=3, visible=False)
+                            height_km = gr.Number(label="Search area height, km", value=3, visible=False)
+                            track_spacing_m = gr.Number(label="Swath lane width / track spacing, meters", value=200)
+                            gr.Markdown("The app calculates lanes, track length, turn burden, and recommended orientation in the background.")
+                        isr_group = gr.Group(visible=True)
+                        with isr_group:
+                            gr.Markdown("### ISR Persistence Inputs")
+                            gr.Markdown("ISR uses the loaded patrol route or perimeter and reports maximum endurance-based time on station.")
+                        payload_group = gr.Group(visible=False)
+                        with payload_group:
+                            gr.Markdown("### Payload Delivery Inputs")
+                            route_distance_km = gr.Number(label="Route distance, km", value=10)
+                            route_heading_deg = gr.Number(label="Route heading, deg", value=0)
+                            payload_weight = gr.Number(label="Payload weight, kg", value=0)
+                            gr.Markdown("Optional payload mass carried by the UUV. Used as a small trim/integration planning burden. Leave 0 if unknown.")
+                            return_to_start = gr.Checkbox(label="Vehicle returns to start after delivery", value=True)
+                        additional_transit_km = gr.Number(label="Additional transit distance, km", value=0)
+                        sustainment_projection_enabled = gr.Checkbox(label="Mission sustainment projection lens", value=False)
+                        sustainment_projection_group = gr.Group(visible=False)
+                        with sustainment_projection_group:
+                            gr.Markdown("### Sustainment Projection")
+                            operations_per_week = gr.Number(label="Operations per week", value=1)
+                            planning_duration = gr.Dropdown(["1 week", "1 month", "3 months"], value="1 week", label="Planning duration")
+                            generator_efficiency = gr.Number(label="Generator efficiency", value=0.84)
+                        run_btn = gr.Button("Run UUV Energy Simulation", variant="primary")
+                        run_status = gr.Textbox(label="Run Status", lines=4, interactive=False)
+                        view_results_button = gr.Button("Go to Results", interactive=False)
 
-        with gr.Tab("3. Results"):
-            gr.HTML("<div id='results-anchor'></div>")
-            results_card = gr.HTML("<div class='uuv-card'>Run a mission simulation to populate results.</div>")
-            metoc_results_card = gr.HTML("")
-            with gr.Row():
-                mission_map_snapshot_plot = gr.Plot(label="Mission Visual Summary", visible=True)
-                energy_time_plot = gr.Plot(label="Mission Energy Progress and Battery Lens")
-            results_plot = gr.Plot(label="Mission Energy Uncertainty Distribution")
-            gr.Markdown("### Energy Detail")
-            gr.Markdown(
-                "Expected, planning-level, and conservative estimates correspond to the 50th, 80th, "
-                "and 95th percentile simulation results. They are used to show how mission energy "
-                "demand changes under uncertainty."
-            )
-            energy_summary_table = gr.HTML("")
-            gr.Markdown("### Battery and Sustainment Detail")
-            battery_sustainment_table = gr.HTML("")
-            gr.Markdown("### Mission Geometry Detail")
-            mission_geometry_summary_table = gr.HTML("")
-            gr.Markdown("### Environmental Detail")
-            environmental_inputs_table = gr.HTML("")
-            gr.Markdown("### Energy Storage Equivalence Lens")
-            energy_equivalence_table = gr.HTML("")
-            gr.Markdown(
-                "Energy-equivalence values are provided as a secondary sustainment-planning lens. "
-                "Oil-equivalent values are approximate conversions and do not imply direct fuel interchangeability."
-            )
-            search_overlay_plot = gr.Plot(label="Search Pattern Overlay", visible=False)
+            with gr.Tab("3. Results", id="results"):
+                gr.HTML("<div id='results-anchor'></div>")
+                results_card = gr.HTML("<div class='uuv-card'>Run a mission simulation to populate results.</div>")
+                metoc_results_card = gr.HTML("")
+                with gr.Row(equal_height=True, elem_classes=["report-visual-grid"]):
+                    with gr.Column(scale=1, min_width=360, elem_classes=["report-visual-card"]):
+                        report_map_overlay = gr.HTML("", visible=False, elem_classes=["report-map-card"])
+                    with gr.Column(scale=1, min_width=360, elem_classes=["report-visual-card"]):
+                        results_plot = gr.Plot(label=None, show_label=False, elem_classes=["report-plot"])
+                with gr.Row(equal_height=True, elem_classes=["report-visual-grid"]):
+                    with gr.Column(scale=1, min_width=360, elem_classes=["report-visual-card"]):
+                        mission_map_snapshot_plot = gr.Plot(label=None, show_label=False, elem_classes=["report-plot"], visible=True)
+                        engineering_snapshot_caption_html = gr.HTML("")
+                    with gr.Column(scale=1, min_width=360, elem_classes=["report-visual-card"]):
+                        energy_time_plot = gr.Plot(label=None, show_label=False, elem_classes=["report-plot"])
+                gr.Markdown("### Energy Detail")
+                gr.Markdown(
+                    "Expected, planning-level, and conservative estimates correspond to the 50th, 80th, "
+                    "and 95th percentile simulation results. They are used to show how mission energy "
+                    "demand changes under uncertainty."
+                )
+                energy_summary_table = gr.HTML("")
+                gr.Markdown("### Battery and Sustainment Detail")
+                battery_sustainment_table = gr.HTML("")
+                gr.Markdown("### Mission Geometry Detail")
+                mission_geometry_summary_table = gr.HTML("")
+                gr.Markdown("### Environmental Detail")
+                environmental_inputs_table = gr.HTML("")
+                gr.Markdown("### Energy Storage Equivalence Lens")
+                energy_equivalence_table = gr.HTML("")
+                gr.Markdown(
+                    "Energy-equivalence values are provided as a secondary sustainment-planning lens. "
+                    "Oil-equivalent values are approximate conversions and do not imply direct fuel interchangeability."
+                )
+                search_overlay_plot = gr.Plot(label=None, show_label=False, elem_classes=["report-plot"], visible=False)
 
         refresh_map_btn.click(refresh_map, inputs=[region_select], outputs=[map_html])
         mission_type_builder.change(mission_builder_visibility, inputs=[mission_type_builder], outputs=[search_note, payload_note])
@@ -805,30 +873,10 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
             ],
         ).then(context_markdown, inputs=[mission_context_state], outputs=[mission_loaded_md])
         build_go_sim_btn.click(
-            build_mission_and_prefill,
-            inputs=[mission_type_builder, geometry_json],
-            js=BUILD_MISSION_AND_GO_JS,
-            outputs=[
-                mission_context_state,
-                mission_status,
-                env_table,
-                mission_env_html,
-                geometry_json,
-                mission_type_sim,
-                manual_area_km2,
-                width_km,
-                height_km,
-                route_distance_km,
-                route_heading_deg,
-                current_mean,
-                current_dir,
-                temp_mean,
-                search_group,
-                payload_group,
-                isr_group,
-                mission_sequences,
-            ],
-        ).then(context_markdown, inputs=[mission_context_state], outputs=[mission_loaded_md])
+            lambda: select_workflow_tab("simulator"),
+            inputs=None,
+            outputs=[workflow_tabs],
+        )
         run_btn.click(
             run_from_ui,
             inputs=[
@@ -868,12 +916,18 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                 energy_time_plot,
                 results_plot,
                 mission_map_snapshot_plot,
-                search_overlay_plot,
+                report_map_overlay,
                 sim_results_state,
                 results_card,
                 energy_equivalence_table,
                 metoc_results_card,
+                engineering_snapshot_caption_html,
             ],
+        )
+        view_results_button.click(
+            lambda: select_workflow_tab("results"),
+            inputs=None,
+            outputs=[workflow_tabs],
         )
     return demo
 

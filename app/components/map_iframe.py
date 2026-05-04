@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import json
 
 from utils.constants import REGION_PRESETS
 
@@ -232,4 +233,108 @@ def build_leaflet_iframe(region_name: str = "Guam") -> str:
   height="700"
   style="border:none; border-radius:12px; overflow:hidden; background:#0b1220;"
 ></iframe>
+"""
+
+
+def build_report_map_overlay_iframe(
+    geometry: dict[str, object] | None,
+    mission_type: str,
+    current_speed_kts: float | None = None,
+    current_direction_deg: float | None = None,
+    metoc_points: list[dict[str, float]] | None = None,
+) -> str:
+    """Return a compact Leaflet report overlay for loaded GPS mission geometry."""
+    if not geometry:
+        return ""
+    geometry_json = html.escape(json.dumps(geometry), quote=False)
+    metoc_json = html.escape(json.dumps(metoc_points or []), quote=False)
+    mission_type_json = html.escape(json.dumps(mission_type), quote=False)
+    current_speed = 0.0 if current_speed_kts is None else float(current_speed_kts)
+    current_dir = 0.0 if current_direction_deg is None else float(current_direction_deg)
+    inner_html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    html, body {{ margin: 0; padding: 0; background: #0b1220; font-family: Arial, sans-serif; }}
+    #map {{ width: 100%; height: 360px; }}
+    .legend {{ position:absolute; bottom:10px; left:10px; background:rgba(15,23,42,.88); color:#e5e7eb; padding:8px 10px; border-radius:8px; font-size:12px; z-index:999; }}
+    .title {{ position:absolute; top:10px; left:10px; background:rgba(15,23,42,.88); color:#fff; padding:8px 10px; border-radius:8px; font-weight:800; font-size:13px; z-index:999; }}
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="title">Mission Map Overlay</div>
+  <div class="legend">GPS geometry | METOC point(s) | Current vector</div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const geometry = {geometry_json};
+    const metocPoints = {metoc_json};
+    const missionType = {mission_type_json};
+    const currentSpeed = {current_speed};
+    const currentDir = {current_dir};
+    const map = L.map('map', {{ zoomControl: true, attributionControl: true }});
+    L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+      attribution: '&copy; OpenStreetMap contributors'
+    }}).addTo(map);
+    const bounds = [];
+    function latLon(p) {{ return [Number(p.lat), Number(p.lon)]; }}
+    function addPoint(p) {{ if (Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lon))) bounds.push(latLon(p)); }}
+    function drawArea(area, label) {{
+      const raw = area.vertices || [];
+      const pts = raw.map(latLon);
+      if (!pts.length) return;
+      raw.forEach(addPoint);
+      L.polygon(pts, {{ color: '#38bdf8', weight: 2, fillColor: '#38bdf8', fillOpacity: 0.18 }}).addTo(map).bindTooltip(label || 'Selected area');
+    }}
+    function drawLine(area) {{
+      const raw = area.route_points || area.vertices || [];
+      const pts = raw.map(latLon);
+      if (!pts.length) return;
+      raw.forEach(addPoint);
+      L.polyline(pts, {{ color: '#f97316', weight: 4 }}).addTo(map).bindTooltip('Selected route');
+      L.circleMarker(pts[0], {{ radius: 5, color: '#22c55e', fillOpacity: 1 }}).addTo(map).bindTooltip('Start');
+      L.circleMarker(pts[pts.length - 1], {{ radius: 6, color: '#ef4444', fillOpacity: 1 }}).addTo(map).bindTooltip('Target');
+    }}
+    if (geometry.geometry_type === 'MultiArea') {{
+      (geometry.areas || []).forEach((area, index) => drawArea(area, 'Search area ' + (index + 1)));
+    }} else if (geometry.geometry_type === 'line') {{
+      drawLine(geometry);
+    }} else {{
+      drawArea(geometry, missionType + ' geometry');
+    }}
+    metocPoints.forEach((point, index) => {{
+      addPoint(point);
+      L.circleMarker(latLon(point), {{ radius: 5, color: '#facc15', fillColor: '#facc15', fillOpacity: 1 }}).addTo(map).bindTooltip('METOC point ' + (index + 1));
+    }});
+    if (bounds.length) {{
+      const center = bounds.reduce((acc, p) => [acc[0] + p[0], acc[1] + p[1]], [0, 0]).map(v => v / bounds.length);
+      const length = Math.max(0.015, currentSpeed * 0.018);
+      const rad = (90 - currentDir) * Math.PI / 180;
+      const end = [center[0] + Math.sin(rad) * length, center[1] + Math.cos(rad) * length];
+      L.polyline([center, end], {{ color: '#a855f7', weight: 3, dashArray: '6 4' }}).addTo(map).bindTooltip('Current vector');
+      L.circleMarker(end, {{ radius: 4, color: '#a855f7', fillOpacity: 1 }}).addTo(map);
+      map.fitBounds(bounds, {{ padding: [32, 32], maxZoom: 13 }});
+    }} else {{
+      map.setView([13.45, 144.8], 10);
+    }}
+  </script>
+</body>
+</html>
+"""
+    srcdoc = html.escape(inner_html, quote=True)
+    return f"""
+<div class="report-visual-card report-map-card">
+  <h3>Mission Map Overlay</h3>
+  <iframe
+    title="uuv-report-map-overlay"
+    srcdoc="{srcdoc}"
+    width="100%"
+    height="410"
+    style="border:none; border-radius:10px; overflow:hidden; background:#0b1220;"
+  ></iframe>
+</div>
 """

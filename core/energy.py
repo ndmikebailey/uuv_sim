@@ -472,22 +472,14 @@ def run_energy_simulation(
         adjusted_powers = np.array([result.adjusted_power_draw_kw for result in isr_persistence_results])
         env_multipliers = np.array([result.environmental_multiplier for result in isr_persistence_results])
         completed_loops = np.array([result.completed_loops for result in isr_persistence_results])
-        per_set_energies = np.array([result.available_mission_energy_kwh for result in isr_persistence_results])
-        total_inventory_station_times = (per_set_energies * max(1, battery_sets_available)) / np.maximum(adjusted_powers, 0.001)
-        total_inventory_completed_loops = np.array(
-            [
-                int(total_time // loop_time) if loop_time > 0 else 0
-                for total_time, loop_time in zip(total_inventory_station_times, loop_times)
-            ]
-        )
         loop_energies = adjusted_powers * loop_times
         partial_loops = np.array([result.remaining_partial_loop_pct for result in isr_persistence_results])
         single_set_endurance_hr = float(np.percentile(station_times, 50))
-        total_inventory_endurance_hr = float(np.percentile(total_inventory_station_times, 50))
-        completed_loops_single_set = int(np.percentile(completed_loops, 50))
-        completed_loops_total_inventory = int(np.percentile(total_inventory_completed_loops, 50))
-        adjusted_power_kw = float(np.percentile(adjusted_powers, 50))
         loop_time_hr = float(np.percentile(loop_times, 50))
+        completed_loops_single_set = int(np.percentile(completed_loops, 50))
+        total_inventory_endurance_hr = single_set_endurance_hr * max(1, battery_sets_available)
+        completed_loops_total_inventory = int(total_inventory_endurance_hr // loop_time_hr) if loop_time_hr > 0 else 0
+        adjusted_power_kw = float(np.percentile(adjusted_powers, 50))
         single_set_coverage = _isr_loop_coverage(single_set_endurance_hr, loop_time_hr, isr_loop_distance_km)
         total_inventory_coverage = _isr_loop_coverage(total_inventory_endurance_hr, loop_time_hr, isr_loop_distance_km)
         isr_summary = {
