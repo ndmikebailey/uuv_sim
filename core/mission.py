@@ -121,12 +121,18 @@ def aggregate_environments(
     salinity_sources = [env.salinity_source for env in environments if env.salinity_source]
     salinity_value = scalar("sea_surface_salinity_psu")
     density_value = scalar("sea_water_density_kg_m3")
-    if salinity_value is not None:
-        salinity_source = "copernicus_marine area-centroid average"
+    unique_sources = sorted(set(salinity_sources))
+    nonstandard_sources = [source for source in unique_sources if source != "Standard seawater assumption"]
+    if len(nonstandard_sources) > 1:
+        salinity_source = "Mixed salinity sources"
+    elif nonstandard_sources:
+        salinity_source = nonstandard_sources[0]
+    elif salinity_value is not None:
+        salinity_source = "Standard seawater assumption"
     elif salinity_sources:
         salinity_source = salinity_sources[0]
     else:
-        salinity_source = "standard_assumption"
+        salinity_source = "Standard seawater assumption"
     return EnvironmentData(
         current_speed_kts_mean=current_speed,
         current_direction_deg_mean=current_direction,

@@ -1,4 +1,4 @@
-"""Model reasonableness checks for v3.2 baseline validation work."""
+"""Model reasonableness checks for v3.5 beta validation work."""
 
 from __future__ import annotations
 
@@ -445,9 +445,9 @@ class ModelReasonablenessTests(unittest.TestCase):
 
         self.assertEqual(payload["planning_energy_basis"], "mission_total")
         self.assertEqual(search["planning_energy_basis"], "mission_total")
-        self.assertEqual(isr["planning_energy_basis"], "patrol_loop")
-        self.assertEqual(isr["planning_duration_basis"], "patrol_loop_time")
-        self.assertEqual(isr["planning_energy_kwh"], isr["isr_loop_energy_kwh"])
+        self.assertEqual(isr["planning_energy_basis"], "mission_total")
+        self.assertEqual(isr["planning_duration_basis"], "endurance_window")
+        self.assertEqual(isr["planning_energy_kwh"], isr["p95_energy_kwh"])
         self.assertEqual(isr["single_set_endurance_hr"], isr["isr_single_set_endurance_hr"])
         self.assertEqual(isr["total_inventory_endurance_hr"], isr["isr_total_inventory_endurance_hr"])
 

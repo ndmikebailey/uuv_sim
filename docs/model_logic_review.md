@@ -63,8 +63,8 @@ ISR reporting distinguishes:
 
 Planning basis:
 
-- `planning_energy_basis = "patrol_loop"`
-- `planning_duration_basis = "patrol_loop_time"`
+- `planning_energy_basis = "mission_total"`
+- `planning_duration_basis = "endurance_window"`
 
 ### Search/MCM
 
@@ -109,9 +109,9 @@ Multi-area Search/MCM uses one METOC lookup per area centroid. Current is vector
 
 Scalar environmental values such as sea surface temperature and wind speed are averaged normally.
 
-Salinity is carried as `sea_surface_salinity_psu` when available from Copernicus Marine or a loaded mission context. Open-Meteo Marine currently rejects `sea_surface_salinity`, so the live request omits that variable and records the omission in query traceability. Standalone/manual simulations use the standard seawater assumption and do not call Copernicus. Mission Builder/GPS geometry attempts Copernicus salinity/density automatically, with Open-Meteo remaining primary for current, SST, wind, and weather. Salinity is displayed for traceability, and multi-area salinity/density are scalar-averaged when present. When salinity is present and deviates from 35 PSU, the model applies a bounded salinity/buoyancy planning uplift. Missing salinity and 35 PSU preserve existing energy behavior.
+Salinity is carried as `sea_surface_salinity_psu` when available from NOAA CO-OPS, NOAA WOA23, a loaded mission context, or the standard seawater fallback. Open-Meteo Marine currently rejects `sea_surface_salinity`, so the live request omits that variable and records the omission in query traceability. Standalone/manual simulations use the standard seawater assumption and do not call live salinity providers. Mission Builder/GPS geometry preserves Open-Meteo current, SST, wind, and weather, then attempts NOAA CO-OPS station salinity, NOAA WOA23 climatology, and standard seawater in that order. Salinity is displayed for traceability, and multi-area salinity/density are scalar-averaged when present. When salinity is present and deviates from 35 PSU, the model applies a bounded salinity/buoyancy planning uplift. Standard seawater is 35.0 PSU and 1025.0 kg/m3, so no salinity uplift is applied.
 
-Copernicus Marine is available as an optional salinity/density provider path. The provider does not hardcode credentials and does not make the app depend on the Copernicus toolbox. When unavailable, it returns a structured salinity error and the mission continues with the standard seawater assumption. Live credentialed validation is pending.
+NOAA CO-OPS station salinity is only valid where a relevant station exists near the mission area and returns a salinity product. NOAA WOA23 is climatological/historical, not live tactical METOC. Standard seawater fallback is used when station/grid data is unavailable. Copernicus was evaluated during development and removed from the active v3.5 salinity chain. HYCOM/GOFS, SMAP, and Argo remain future enhancement or V&V sources only. Salinity and density inputs are planning modifiers only and are not tactical oceanographic authority.
 
 ## Payload Mass Burden
 
@@ -150,7 +150,7 @@ The uncertainty distribution is a planning lens. It does not represent a fully v
 
 ## Sustainment Projection Lens
 
-The Sustainment Projection Lens is an energy-flow planning lens, not a fleet optimizer. By default, simulator runs report a single-mission case over a one-week timeframe. Operators can enable the optional Mission sustainment projection lens to edit tempo, horizon, and generator efficiency. The report projects conservative mission energy over the selected planning horizon and reports total energy demand, available inventory energy per cycle, approximate full inventory recharge cycles, recharge energy required, and generator input energy at the selected efficiency.
+The Sustainment Projection Lens is an energy-flow planning lens, not a fleet optimizer. By default, simulator runs report a single-mission case over a one-week timeframe. Operators can enable the optional Mission sustainment projection lens to edit tempo, horizon, and generator efficiency. The report projects conservative mission energy over the selected planning horizon and reports total energy demand, available inventory energy per cycle, approximate full inventory recharge cycles, recharge energy required, and generator input energy at the selected efficiency. It also reports a secondary fuel-equivalent estimate using `generator_input_energy_kwh / 10.0` with the label JP-8/diesel tactical-generator planning factor. This is a sustainment-planning estimate, not a generator certification curve.
 
 ## Planning Basis Definitions
 
@@ -160,11 +160,11 @@ The Sustainment Projection Lens is an energy-flow planning lens, not a fleet opt
 
 ### patrol_loop
 
-`patrol_loop` means planning energy is the estimated energy for one ISR patrol loop. ISR uses this basis because endurance and persistence are better expressed as loop time, endurance window, and total patrol distance.
+`patrol_loop` remains a geometry and coverage-accounting concept for ISR. It is not the active ISR planning-energy basis; ISR planning energy is now the total endurance-window mission energy expended across the completed and partial loop set.
 
 ### endurance_window
 
-`endurance_window` means the available time or energy window before recovery, swap, or battery exhaustion. ISR reports endurance window values, but the current explicit planning energy basis is `patrol_loop`.
+`endurance_window` means the available time or energy window before recovery, swap, or battery exhaustion. ISR uses this duration basis while retaining loop distance and loop count for patrol coverage reporting.
 
 ## Limitations And Future Work
 
@@ -176,4 +176,4 @@ The Sustainment Projection Lens is an energy-flow planning lens, not a fleet opt
 - Improve per-area Search/MCM lane rendering instead of aggregate equivalent area only.
 - Add contested-delay/loiter interruption model.
 - Expand thesis documentation with assumption provenance, validation scenarios, and sensitivity analysis.
-- Reconcile app version constants with v3.3-beta branch naming before release.
+- Confirm v3.5 beta app, energy model, and vehicle catalog version labels during manual release review.

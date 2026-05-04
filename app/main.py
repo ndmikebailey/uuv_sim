@@ -39,7 +39,7 @@ from models.environment_model import EnvironmentData
 from models.mission_model import MissionArea, MissionAreaSet
 from models.vehicle_model import VEHICLE_CATALOG
 from services.marine_api import OpenMeteoMarineClient
-from services.metoc_fusion import MetocFusionService
+from services.metoc_fusion import MetocFusionService, standard_seawater_environment
 from services.run_logger import write_run_record
 from services.weather_api import OpenMeteoWeatherClient
 from utils.constants import APP_NAME, APP_VERSION, ISR_MISSIONS, MISSION_TYPES, PAYLOAD_MISSIONS, REGION_PRESETS, SEARCH_MISSIONS
@@ -457,15 +457,18 @@ def _apply_salinity_policy(
 ) -> EnvironmentData:
     """Preserve Mission Builder salinity and keep standalone simulations on standard seawater."""
     if has_loaded_context:
+        if environment.sea_surface_salinity_psu is None:
+            return environment.merged(standard_seawater_environment())
         if not environment.salinity_source:
-            environment.salinity_source = "standard_assumption"
+            environment.salinity_source = "Standard seawater assumption"
         return environment
-    environment.sea_surface_salinity_psu = None
-    environment.sea_water_density_kg_m3 = None
-    environment.salinity_source = "standard_assumption"
-    environment.salinity_error = None
-    environment.salinity_query_params = {"source": "standard_assumption", "note": "salinity not applied"}
-    return environment
+    standard = standard_seawater_environment()
+    standard.current_speed_kts_mean = environment.current_speed_kts_mean
+    standard.current_direction_deg_mean = environment.current_direction_deg_mean
+    standard.sea_surface_temp_c_mean = environment.sea_surface_temp_c_mean
+    standard.salinity_error = None
+    standard.salinity_query_params = {"source": "Standard seawater assumption", "note": "manual/no-GPS mission; live salinity providers not called"}
+    return standard
 
 
 def run_from_ui(
@@ -631,12 +634,12 @@ def run_from_ui(
         + build_detail_section_html(
             build_sustainment_projection_rows(summary),
             "Sustainment Projection Lens",
-            "The sustainment lens is an energy-flow projection for the selected horizon and operations tempo.",
+            "The sustainment lens is an energy-flow projection for the selected horizon and operations tempo. Fuel-equivalent estimate uses a conservative 10.0 kWh/gal JP-8/diesel tactical-generator planning factor. This is a sustainment-planning estimate, not a generator certification curve.",
             build_sustainment_projection_helper(summary),
         )
     )
     geometry_note = (
-        "ISR persistence is evaluated by patrol-loop endurance. Total inventory values assume sequential use of available charged battery sets."
+        "ISR persistence is evaluated as total endurance-window mission energy, with loop distance retained for patrol coverage accounting."
         if mission_type in ISR_MISSIONS
         else "Mission geometry defines the route, search, or payload burden used by the energy model."
     )
@@ -649,12 +652,16 @@ def run_from_ui(
     environmental_inputs_html = build_detail_section_html(
         build_environmental_input_rows(summary, environment),
         "Environmental Detail",
-        "Environmental burden is applied as a planning modifier; Open-Meteo values support planning context and are not tactical METOC authority.",
+        "Environmental burden is applied as a planning modifier; Open-Meteo values support planning context. Salinity and density are planning modifiers only and are not tactical oceanographic authority.",
         build_environment_detail_helper(summary),
     )
     equivalence_energy_kwh, equivalence_basis = _energy_equivalence_planning_basis(summary)
     energy_equivalence_html = build_report_table_html(
-        build_energy_equivalence_rows(equivalence_energy_kwh, equivalence_basis),
+        build_energy_equivalence_rows(
+            equivalence_energy_kwh,
+            equivalence_basis,
+            float(summary.get("sustainment_fuel_gallons_equivalent") or 0.0),
+        ),
         "Energy Storage Equivalence Lens",
     )
     fig_time = build_energy_time_chart(
@@ -731,7 +738,7 @@ def create_demo() -> gr.Blocks:
 Build a mission first, then run a single-UUV energy estimate. The simulator can also run by itself if no map mission is built.
 """
         )
-        gr.Markdown(f"<div class='build-label'>Current dev build: {APP_VERSION}</div>")
+        gr.Markdown(f"<div class='build-label'>Current build: {APP_VERSION}</div>")
 
         with gr.Tabs(selected="builder", elem_id="workflow-tabs") as workflow_tabs:
             with gr.Tab("1. Mission Builder", id="builder"):

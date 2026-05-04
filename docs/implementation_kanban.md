@@ -11,18 +11,18 @@ Source basis: local project files and `UUV Project file Notes.md`. This board is
 | Battery usable fraction and reserve margin | Vehicle catalog carries a legacy `usable_fraction`, while the current Monte Carlo samples usable battery fraction by condition. Operator reserve margin remains a separate factor. | `core/battery.py`, `models/vehicle_model.py`, `data/vehicle_catalog.json` |
 | Mission energy percentiles | Monte Carlo runs produce P50, P80, P95, mean energy, and mean duration. | `core/energy.py::run_energy_simulation` |
 | Battery shortfall and recharge downtime | Model compares P80 demand to battery inventory, computes battery shortfall, recharge/swap sequences, and downtime when recharge is enabled. | `core/energy.py::run_energy_simulation` |
-| Payload route energy | Payload Delivery supports line-route distance, optional return to start, added transit distance, current burden, speed-power correction, temperature uplift, and mission sequences. | `core/energy.py`, `core/geometry.py` |
+| Payload route energy | Payload Delivery supports line-route distance, optional return to start, added transit distance, current burden, speed-power correction, battery temperature capacity derating, and mission sequences. | `core/energy.py`, `core/geometry.py` |
 | Search/MCM lane orientation comparison | Search/MCM evaluates north-south and east-west lane plans, applies current/temperature burden, and selects the lower-energy orientation. | `core/energy.py::search_plan`, `core/geometry.py::clipped_search_lanes` |
 | ISR loop endurance | ISR computes loop distance, loop time, single-set endurance, total-inventory endurance, completed loops, partial loop coverage, and patrol distance. | `core/energy.py::compute_isr_persistence`, `core/geometry.py::isr_path_distance_per_loop_km` |
 | METOC representative point logic | Single-area search uses centroid; payload uses route midpoint; ISR uses first patrol point. Multi-area Search/MCM uses each area centroid and vector-averages current. | `core/mission.py` |
-| Temperature and current uplift | Temperature, payload current, search current, and ISR station-keeping/current burden are implemented as simplified planning factors. | `core/environment.py`, `core/energy.py::isr_current_power_penalty` |
+| Current and environmental burden | Payload current, search current, ISR station-keeping/current burden, and salinity burden are implemented as simplified planning factors. Temperature reduces usable battery capacity instead of adding mission-energy demand uplift. | `core/environment.py`, `core/battery.py`, `core/energy.py::isr_current_power_penalty` |
 | Model assumptions registry | Core assumptions are exposed through `core/assumptions.py`, including speed-power, salinity, battery, temperature, sustainment, and payload-mass planning assumptions. | `core/assumptions.py` |
-| Planning-basis fields | Reports distinguish mission-total, patrol-loop, inventory, recharge, and sustainment planning bases so Payload, ISR, and Search/MCM are not mixed in one headline metric. | `core/energy.py`, `app/ui/reporting.py` |
+| Planning-basis fields | Reports use mission-total planning energy for Payload, ISR, and Search/MCM. ISR retains patrol-loop metrics only for coverage accounting. | `core/energy.py`, `app/ui/reporting.py` |
 | Multi-area Search/MCM backend | Backend supports `MissionAreaSet`, centroid METOC sampling, vector-averaged current, scalar-averaged salinity/density, aggregate equivalent area, and sampled-point reporting. | `core/mission.py`, `core/geometry.py`, `models/mission_model.py` |
 | Salinity environment data foundation | Salinity is represented in `EnvironmentData`, parsed if present in a payload, shown in environment table rows, averaged for multi-area missions, and preserved in internal run records. Open-Meteo Marine does not currently accept `sea_surface_salinity`, so the live marine request omits it and records that status in query traceability. | `services/marine_api.py`, `models/environment_model.py`, `core/mission.py`, `services/run_logger.py` |
 | Salinity/buoyancy planning penalty | Salinity now contributes a bounded energy uplift when salinity is present and deviates from 35 PSU. Missing salinity and 35 PSU preserve current behavior. | `core/environment.py::salinity_buoyancy_penalty`, `core/energy.py` |
-| Copernicus salinity/density provider path | Optional credential-safe Copernicus Marine provider added. It reads credentials only from environment/toolbox config, returns graceful `EnvironmentData` on missing package/access, and supplements salinity/density when available. Live credentialed validation remains pending. | `services/copernicus_api.py`, `services/metoc_fusion.py` |
-| Automatic salinity policy | Standalone/manual simulations use the standard seawater assumption and do not call Copernicus. Mission Builder/GPS geometry attempts Copernicus salinity/density automatically through METOC fusion and falls back cleanly. | `app/main.py`, `services/metoc_fusion.py`, `core/mission.py` |
+| Salinity provider chain | Mission Builder/GPS geometry attempts NOAA CO-OPS station salinity, NOAA WOA23 climatology, then standard seawater. Copernicus was removed from the active v3.5 chain. | `services/noaa_coops_salinity.py`, `services/woa23_salinity.py`, `services/metoc_fusion.py` |
+| Automatic salinity policy | Standalone/manual simulations use the standard seawater assumption and do not call live salinity providers. GPS missions preserve Open-Meteo values even when salinity providers are unavailable. | `app/main.py`, `services/metoc_fusion.py`, `core/mission.py` |
 | Stochastic usable battery fraction | Monte Carlo now samples practical usable battery fraction by Low/Medium/High battery condition, separate from operator reserve and temperature derating. | `core/battery.py`, `core/energy.py`, `app/main.py` |
 | Temperature derating refinement | Temperature now reduces usable battery capacity through `lithium_temperature_capacity_derating_v1`; it is no longer double-counted as a demand-side energy uplift. | `core/battery.py`, `core/energy.py` |
 | Sustainment Projection Lens | Simplified energy-flow projection added for operations per week, planning horizon, available inventory cycles, recharge energy, and generator input energy. | `core/sustainment.py`, `app/ui/reporting.py`, `app/main.py` |
@@ -35,7 +35,7 @@ Source basis: local project files and `UUV Project file Notes.md`. This board is
 
 | Item | Implementation state | Next development action |
 | --- | --- | --- |
-| Release labeling and manual UI review | Code constants and primary docs now use the v3.3 research-development label, but manual UI testing has not been completed in this pass. | Confirm visible build label, report language, and tab-navigation text during manual UI testing. |
+| Release labeling and manual UI review | Code constants and primary docs use the v3.5 beta label; manual UI testing remains a team-testing activity. | Confirm visible build label, report language, and tab-navigation text during manual UI testing. |
 
 ## Next
 
@@ -184,7 +184,7 @@ Implementation tasks:
 - Surface `compute_sustainment_projection()` output in the Results tab.
 - Parameterize hotel fraction by vehicle or configuration while preserving `0.35` default. Complete.
 - Add one-way/non-rechargeable report wording for catalog entries with `recharge_hr = 0.0`. Complete.
-- Reconcile version labels before formal release.
+- Confirm v3.5 beta release labels during manual UI review.
 
 Exit criteria:
 
@@ -199,5 +199,4 @@ Exit criteria:
 | Per-area Search/MCM lanes | Replace aggregate equivalent square with per-area lane planning and reporting. | Multi-area output preserves each area's lane count, track distance, and METOC sample. |
 | Full fleet optimizer | Expand beyond single-UUV/inventory-cycle planning into multi-vehicle scheduling only after thesis scope requires it. | Fleet outputs are explicit and do not replace current single-UUV planning result. |
 | Full `run_energy_simulation()` refactor | Split payload, ISR, and Search/MCM branches into mission-specific helpers. | Test coverage remains equivalent and output schema is preserved. |
-| Fuel gallons conversion | Keep fuel conversion secondary unless a cited conversion factor is selected for this project. | Report labels make energy-equivalence assumptions clear. |
-| Release labeling cleanup | Reconcile branch, app version, energy model version, and docs before next formal release. | Constants, docs, and release notes use one consistent version label. |
+| Fuel gallons conversion | Keep fuel conversion secondary unless a generator-specific certified curve is selected for this project. | Report labels keep the 10.0 kWh/gal JP-8/diesel factor as a planning lens, not a certified generator curve. |

@@ -90,6 +90,27 @@ class FakeWeatherClient:
         return EnvironmentData(weather_query_params={"latitude": lat, "longitude": lon})
 
 
+class FakeNoaaUnavailableProvider:
+    def fetch(self, lat: float, lon: float, when_utc=None) -> EnvironmentData:
+        return EnvironmentData(
+            salinity_source="noaa_coops_unavailable",
+            salinity_error="no station",
+        )
+
+
+def fake_woa_standard(lat: float, lon: float, month=None, depth_m: float = 0.0) -> dict:
+    return {"salinity_psu": 35.0, "density_kg_m3": 1025.0, "salinity_source": "Standard seawater assumption"}
+
+
+class FakeNoaaProvider:
+    def fetch(self, lat: float, lon: float, when_utc=None) -> EnvironmentData:
+        return EnvironmentData(
+            sea_surface_salinity_psu=34.4,
+            sea_water_density_kg_m3=1024.0,
+            salinity_source="NOAA CO-OPS station observation",
+        )
+
+
 class MissionLookupTests(unittest.TestCase):
     """Mission-specific environmental lookup behavior."""
 
@@ -143,33 +164,37 @@ class MissionLookupTests(unittest.TestCase):
         self.assertEqual(result.context.environment.source, "Open-Meteo area-centroid average")
         self.assertAlmostEqual(float(result.context.environment.sea_surface_salinity_psu or 0.0), 35.0)
 
-    def test_metoc_fusion_attempts_salinity_when_enabled(self) -> None:
-        """Mission Builder service path should supplement Open-Meteo with Copernicus when enabled."""
-        service = MetocFusionService(FakeMarineClient(), FakeWeatherClient(), salinity_enabled=True)
-        with patch("services.metoc_fusion.get_copernicus_salinity_density") as mocked:
-            mocked.return_value = EnvironmentData(
-                sea_surface_salinity_psu=34.4,
-                sea_water_density_kg_m3=1024.0,
-                salinity_source="copernicus_marine",
-            )
-            result = service.fetch(13.4, 144.8)
-        mocked.assert_called_once()
+    def test_metoc_fusion_attempts_noaa_salinity_when_enabled(self) -> None:
+        """Mission Builder service path should try NOAA before broader fallbacks."""
+        service = MetocFusionService(
+            FakeMarineClient(),
+            FakeWeatherClient(),
+            salinity_enabled=True,
+            noaa_salinity_provider=FakeNoaaProvider(),  # type: ignore[arg-type]
+            woa_salinity_provider=fake_woa_standard,
+        )
+        result = service.fetch(13.4, 144.8)
         self.assertEqual(result.current_speed_kts_mean, 0.5)
         self.assertEqual(result.sea_surface_salinity_psu, 34.4)
         self.assertEqual(result.sea_water_density_kg_m3, 1024.0)
+        self.assertEqual(result.salinity_source, "NOAA CO-OPS station observation")
 
-    def test_copernicus_unavailable_does_not_break_fusion(self) -> None:
-        """Copernicus failure should preserve Open-Meteo values and clean fallback status."""
-        service = MetocFusionService(FakeMarineClient(), FakeWeatherClient(), salinity_enabled=True)
-        with patch("services.metoc_fusion.get_copernicus_salinity_density") as mocked:
-            mocked.return_value = EnvironmentData(
-                salinity_source="copernicus_unavailable",
-                salinity_error="Copernicus Marine toolbox is not installed.",
-            )
-            result = service.fetch(13.4, 144.8)
+    def test_provider_unavailable_does_not_break_fusion(self) -> None:
+        """Salinity provider failure should preserve Open-Meteo values and clean fallback status."""
+        service = MetocFusionService(
+            FakeMarineClient(),
+            FakeWeatherClient(),
+            salinity_enabled=True,
+            noaa_salinity_provider=FakeNoaaUnavailableProvider(),  # type: ignore[arg-type]
+            woa_salinity_provider=fake_woa_standard,
+        )
+        result = service.fetch(13.4, 144.8)
         self.assertEqual(result.current_speed_kts_mean, 0.5)
-        self.assertIsNone(result.sea_surface_salinity_psu)
-        self.assertEqual(result.salinity_source, "copernicus_unavailable")
+        self.assertEqual(result.sea_surface_temp_c_mean, 25.0)
+        self.assertEqual(result.sea_surface_salinity_psu, 35.0)
+        self.assertEqual(result.sea_water_density_kg_m3, 1025.0)
+        self.assertEqual(result.salinity_source, "Standard seawater assumption")
+        self.assertIn("NOAA CO-OPS station observation", result.salinity_query_params["provider_chain"])
 
 
 if __name__ == "__main__":

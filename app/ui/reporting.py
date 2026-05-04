@@ -545,7 +545,7 @@ def _planning_basis_phrase(summary: dict[str, object]) -> str:
     """Translate planning basis keys into executive-readable text."""
     basis = str(summary.get("planning_energy_basis") or "")
     if basis == "patrol_loop":
-        return "patrol-loop endurance"
+        return "ISR mission-total endurance energy"
     if basis == "endurance_window":
         return "endurance-window"
     return "mission-total energy"
@@ -589,8 +589,8 @@ def _executive_results_summary_html(summary: dict[str, object], environment: Env
         total_endurance = _as_float(summary.get("isr_total_inventory_endurance_hr"))
         loops_total = _as_int(summary.get("isr_completed_loops_total_inventory"))
         first = (
-            f"The modeled ISR mission uses {platform} as a patrol-loop endurance problem: "
-            f"{fmt1(loop_distance)} km per loop, {fmt1(loop_time)} hr per loop, and {fmt1(loop_energy)} kWh per loop."
+            f"The modeled ISR mission uses {platform} as a mission-total endurance case: "
+            f"{fmt1(loop_distance)} km per loop, {fmt1(loop_time)} hr per loop, and {fmt1(loop_energy)} kWh per loop for loop accounting."
         )
         second = (
             f"The declared inventory supports approximately {fmt1(total_endurance)} hr and {fmt_int(loops_total)} full loop(s), "
@@ -731,7 +731,7 @@ def _isr_planning_note(summary: dict[str, object]) -> str:
     if loop_time is not None:
         parts.append(f"patrol loop time is {fmt1(loop_time)} hr")
     if loop_energy is not None:
-        parts.append(f"patrol loop energy is {fmt1(loop_energy)} kWh")
+        parts.append(f"patrol loop energy for loop accounting is {fmt1(loop_energy)} kWh")
     if single_set_endurance is not None:
         partial_text = f", plus {fmt1(partial_single_km)} km of the next loop" if partial_single_km and partial_single_km > 0.05 else ""
         completed_text = f" after {fmt_int(completed_loops_single)} full loop(s)" if completed_loops_single is not None else ""
@@ -841,13 +841,14 @@ def build_technical_traceability_html(summary: dict[str, object], environment: E
         ("Usable battery fraction P50", _float_or_blank(summary.get("battery_usable_fraction_p50")), ""),
         ("Usable battery fraction P90", _float_or_blank(summary.get("battery_usable_fraction_p90")), ""),
         ("Temperature derating basis", summary.get("temperature_derating_basis"), ""),
-        ("Salinity provider status", environment.salinity_source or "standard_assumption", ""),
         ("METOC lookup method", _trace_lookup_method(summary, environment), ""),
         ("Multi-area aggregation method", summary.get("metoc_aggregation_method"), ""),
         ("Run-record traceability status", summary.get("run_record_traceability_status", "recorded"), ""),
         ("Source note", source_note, ""),
         ("Usable battery basis", usable_basis, ""),
     ]
+    if environment.salinity_source and environment.salinity_source != "Standard seawater assumption":
+        rows.insert(12, ("Salinity provider status", environment.salinity_source, ""))
     table = build_report_table_html(rows, "Technical Traceability / Model Detail")
     if not table:
         return ""
@@ -1135,9 +1136,14 @@ def build_battery_sustainment_rows(summary: dict[str, object]) -> list[tuple[str
     p80 = float(summary.get("p80_energy_kwh") or 0.0)
     p95 = float(summary.get("p95_energy_kwh") or 0.0)
     total_available = float(summary.get("total_available_kwh") or 0.0)
+    mission_type = str(summary.get("mission_type") or "")
     shortfall_kwh = max(p80 - total_available, 0.0)
     conservative_shortfall_kwh = max(p95 - total_available, 0.0)
     conservative_sets_required = max(1, math.ceil(p95 / max(usable_per_set, 0.001)))
+    if mission_type in ISR_MISSIONS:
+        conservative_sets_required = max(1, int(summary.get("battery_sets_required_p80") or 1))
+        shortfall_kwh = 0.0
+        conservative_shortfall_kwh = 0.0
     conservative_inventory_sufficient = conservative_shortfall_kwh <= 0.0
     recharge_required = conservative_shortfall_kwh > 0.0
     return [
@@ -1194,7 +1200,22 @@ def build_sustainment_projection_rows(summary: dict[str, object]) -> list[tuple[
         ("Recharge energy required", _float_or_blank(summary.get("sustainment_recharge_energy_required_kwh")), "kWh"),
         ("Generator efficiency", _float_or_blank(summary.get("sustainment_generator_efficiency")), ""),
         ("Generator input energy", _float_or_blank(summary.get("sustainment_generator_input_energy_kwh")), "kWh"),
+        ("Generator planning factor", _float_or_blank(summary.get("sustainment_generator_kwh_per_gallon")), "kWh/gal"),
     ]
+
+
+def _salinity_source_label(environment: EnvironmentData) -> str:
+    """Return report wording for salinity source."""
+    source = environment.salinity_source or ""
+    if source == "NOAA CO-OPS station observation":
+        return "NOAA CO-OPS station observation."
+    if source == "NOAA WOA23 climatology":
+        return "NOAA WOA23 climatology."
+    if source == "Mixed salinity sources":
+        return "Mixed salinity sources."
+    if source == "Standard seawater assumption":
+        return "Standard seawater assumption."
+    return source
 
 
 def build_mission_geometry_summary_rows(
@@ -1285,14 +1306,12 @@ def build_environmental_input_rows(
             total_uplift_pct = (float(environmental_multiplier) - 1.0) * 100.0
         except (TypeError, ValueError):
             total_uplift_pct = ""
-    return [
+    rows = [
         ("Current speed", _float_or_blank(environment.current_speed_kts_mean), "kts"),
         ("Current direction", _float_or_blank(environment.current_direction_deg_mean), "deg"),
         ("Sea surface temperature", _float_or_blank(environment.sea_surface_temp_c_mean), "deg C"),
         ("Sea surface salinity", _float_or_blank(environment.sea_surface_salinity_psu), "PSU"),
         ("Sea water density", _float_or_blank(environment.sea_water_density_kg_m3), "kg/m3"),
-        ("Salinity source", environment.salinity_source or "", ""),
-        ("Salinity provider note", "Salinity unavailable from configured provider; standard seawater assumption used." if environment.sea_surface_salinity_psu is None else "", ""),
         ("Wind speed", _float_or_blank(environment.wind_speed_kts_mean), "kts"),
         ("Weather summary", environment.weather_summary or "", ""),
         ("Current uplift", _nonzero_float(summary.get("current_uplift_pct")), "%"),
@@ -1300,9 +1319,26 @@ def build_environmental_input_rows(
         ("Salinity uplift", _nonzero_float(summary.get("salinity_uplift_pct")), "%"),
         ("Total uplift", total_uplift_pct, "%"),
     ]
+    if environment.salinity_source:
+        rows.insert(5, ("Salinity source", _salinity_source_label(environment), ""))
+    return rows
 
 
-def build_energy_equivalence_rows(planning_energy_kwh: float, planning_basis: str) -> list[list[str, str]]:
+def _fmt_gallons(value: object) -> str:
+    """Format fuel gallons with useful precision for small planning values."""
+    numeric = _as_float(value)
+    if numeric is None:
+        return ""
+    if abs(numeric) < 10.0:
+        return f"{numeric:.2f}"
+    return fmt1(numeric)
+
+
+def build_energy_equivalence_rows(
+    planning_energy_kwh: float,
+    planning_basis: str,
+    fuel_gallons_equivalent: float | None = None,
+) -> list[list[str, str]]:
     """Build secondary energy-storage equivalence rows for sustainment planning."""
     wh = planning_energy_kwh * 1000.0
     joules = wh * 3600.0
@@ -1313,7 +1349,7 @@ def build_energy_equivalence_rows(planning_energy_kwh: float, planning_basis: st
     boe = planning_energy_kwh / 1700.0
     tons_oil = planning_energy_kwh / 11400.0
 
-    return [
+    rows = [
         ["Planning basis", planning_basis],
         ["Conservative planning energy", f"{fmt1(planning_energy_kwh)} kWh"],
         ["Watt-hours", f"{wh:,.0f} Wh"],
@@ -1325,6 +1361,9 @@ def build_energy_equivalence_rows(planning_energy_kwh: float, planning_basis: st
         ["Barrel-of-oil equivalent", f"{boe:.6f} BOE"],
         ["Metric tons oil equivalent", f"{tons_oil:.6f} metric tons oil equivalent"],
     ]
+    if fuel_gallons_equivalent is not None:
+        rows.append(["Fuel-equivalent estimate", f"{_fmt_gallons(fuel_gallons_equivalent)} gal JP-8/diesel"])
+    return rows
 
 
 def metoc_html(environment: EnvironmentData, fusion_service: MetocFusionService) -> str:

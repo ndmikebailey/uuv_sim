@@ -28,14 +28,14 @@ MODEL_ASSUMPTIONS: dict[str, ModelAssumption] = {
         key="default_hotel_load_fraction",
         value=0.35,
         rationale="Separates fixed hotel/sensor/control load from speed-dependent propulsion load.",
-        source="Engineering planning assumption for v3.3 research build speed-power correction.",
+        source="Engineering planning assumption for v3.5 beta speed-power correction.",
         confidence="low-medium",
     ),
     "default_usable_battery_fraction": ModelAssumption(
         key="default_usable_battery_fraction",
         value=0.88,
         rationale="Legacy catalog value retained for compatibility; current simulations sample battery condition separately from operator reserve margin.",
-        source="v3.2 public baseline catalog planning assumption retained in v3.3 research build.",
+        source="Public baseline catalog planning assumption retained in v3.5 beta.",
         confidence="medium",
     ),
     "usable_battery_fraction_range": ModelAssumption(
@@ -110,17 +110,17 @@ MODEL_ASSUMPTIONS: dict[str, ModelAssumption] = {
     ),
     "salinity_source_policy": ModelAssumption(
         key="salinity_source_policy",
-        value="standalone manual simulation uses standard seawater; Mission Builder geometry automatically attempts Copernicus Marine",
-        rationale="Open-Meteo remains primary METOC; Copernicus supplements salinity and density only for loaded GPS mission geometry.",
-        source="services.copernicus_api and app.main.",
+        value="NOAA CO-OPS station when available; NOAA WOA23 climatology when available; standard seawater otherwise",
+        rationale="Open-Meteo remains primary METOC; salinity/density are planning modifiers with standard seawater as the safe fallback.",
+        source="services.metoc_fusion, services.noaa_coops_salinity, services.woa23_salinity, and app.main.",
         confidence="medium",
     ),
-    "copernicus_salinity_provider_status": ModelAssumption(
-        key="copernicus_salinity_provider_status",
-        value="optional provider; credentials read only from environment or toolbox local config",
-        rationale="Keeps Copernicus integration API-ready without making the app depend on credentials or package installation.",
-        source="services.copernicus_api.",
-        confidence="medium",
+    "generator_fuel_equivalent_factor": ModelAssumption(
+        key="generator_fuel_equivalent_factor",
+        value="10.0 kWh/gal JP-8/diesel tactical-generator planning factor",
+        rationale="Provides a conservative secondary sustainment-planning lens from already computed generator-side energy without double-counting generator efficiency.",
+        source="core.sustainment.compute_sustainment_projection.",
+        confidence="low-medium",
     ),
     "salinity_buoyancy_penalty_curve": ModelAssumption(
         key="salinity_buoyancy_penalty_curve",

@@ -251,7 +251,7 @@ def compute_isr_persistence(
     environmental_multiplier: float,
 ) -> ISRPersistenceResult:
     """Compute maximum ISR time on station from route/perimeter length and usable energy."""
-    # TODO(v3.2): Model contested-delay stochastic hover/loiter interruptions after speed-power validation stabilizes.
+    # TODO(v3.5+): Model contested-delay stochastic hover/loiter interruptions after speed-power validation stabilizes.
     endurance_speed_kmh = max(endurance_speed_kts * 1.852, 0.001)
     available_mission_energy_kwh = max(usable_energy_kwh * (1.0 - reserve_fraction), 0.0)
     adjusted_power_draw_kw = max(endurance_power_kw * environmental_multiplier, 0.001)
@@ -446,6 +446,8 @@ def run_energy_simulation(
     available_inventory_samples = sampled_usable_battery_per_set * max(1, battery_sets_available)
     inventory_probability = float(np.mean(energy_arr <= available_inventory_samples) * 100.0)
     battery_sets_required_p80 = max(1, math.ceil(p80 / max(usable_battery_per_set, 0.001)))
+    if mission_type in ISR_MISSIONS:
+        battery_sets_required_p80 = 1
     battery_shortfall = max(0, battery_sets_required_p80 - max(1, battery_sets_available))
     effective_recharge_allowed = bool(recharge_allowed) and is_vehicle_rechargeable(vehicle)
     recharge_sequences_required = battery_shortfall if effective_recharge_allowed else 0
@@ -552,10 +554,10 @@ def run_energy_simulation(
         mean_environmental_multiplier = (1.0 + mean_current_uplift_pct / 100.0) * (1.0 + (mean_temp_uplift_pct + mean_salinity_uplift_pct) / 100.0)
 
     if mission_type in ISR_MISSIONS:
-        planning_energy_basis = "patrol_loop"
-        planning_energy_kwh = float(isr_summary.get("isr_loop_energy_kwh", p95))
-        planning_duration_basis = "patrol_loop_time"
-        planning_duration_hr = float(isr_summary.get("isr_loop_time_hr", mean_duration))
+        planning_energy_basis = "mission_total"
+        planning_energy_kwh = p95
+        planning_duration_basis = "endurance_window"
+        planning_duration_hr = float(isr_summary.get("isr_single_set_endurance_hr", mean_duration))
     else:
         planning_energy_basis = "mission_total"
         planning_energy_kwh = p95

@@ -1,6 +1,6 @@
 # Current Build Static Audit
 
-Date prepared: 2026-05-02
+Date prepared: 2026-05-04
 
 Scope: static source review and documentation support for manual testing and later thesis/V&V work. This is not a functional smoke test and not a code audit.
 
@@ -8,13 +8,13 @@ Scope: static source review and documentation support for manual testing and lat
 
 - Active compatibility entrypoint: `app.py`
 - Active Gradio application module: `app/main.py`
-- Current git branch observed during static review: `Alpha/v3.3-beta`
+- Current git branch observed during static review: `Alpha/3.5-Beta-Release`
 - Application name from constants: `UUV Mission Planning and Energy Simulator`
-- App version from constants: `v3.3-research-dev`
-- Energy model version from constants: `energy_model_v3_3_research_dev`
-- Vehicle catalog version from constants: `vehicle_catalog_v3_2_public_baseline`
+- App version from constants: `v3.5-beta`
+- Energy model version from constants: `energy_model_v3_5_beta`
+- Vehicle catalog version from constants: `vehicle_catalog_v3_5_public_baseline`
 
-Note: constants now use the v3.3 research-development label. This is still a development build pending manual UI review.
+Note: constants now use the v3.5 beta label for team testing. This is still a planning tool pending manual UI review and V&V.
 
 ## Major Modules And Responsibilities
 
@@ -27,7 +27,7 @@ Note: constants now use the v3.3 research-development label. This is still a dev
 - `core/sustainment.py`: Simplified sustainment energy-flow projection helper.
 - `core/geometry.py`: Geometry parsing, projection, route/area calculations, search lane generation, ISR path length calculations.
 - `core/mission.py`: Mission geometry validation, METOC lookup point selection, multi-area METOC aggregation.
-- `core/environment.py`: Current decomposition, temperature penalty, environmental uplift helpers.
+- `core/environment.py`: Current decomposition, salinity burden, and environmental uplift helpers. Temperature is handled as battery capacity derating.
 - `core/assumptions.py`: Model assumptions registry and row export helper.
 - `models/vehicle_model.py`: `VehicleState` dataclass and active vehicle catalog loader.
 - `models/mission_model.py`: `MissionArea`, `MissionAreaSet`, and `MissionContext` dataclasses.
@@ -35,7 +35,7 @@ Note: constants now use the v3.3 research-development label. This is still a dev
 - `services/marine_api.py`: Open-Meteo marine client.
 - `services/weather_api.py`: Open-Meteo weather client.
 - `services/metoc_fusion.py`: Marine/weather fusion, optional salinity enrichment, and METOC risk card assessment.
-- `services/copernicus_api.py`: Optional credential-safe Copernicus Marine salinity/density provider path.
+- `services/noaa_coops_salinity.py`, `services/woa23_salinity.py`, `services/metoc_fusion.py`: NOAA CO-OPS -> NOAA WOA23 -> standard seawater salinity provider chain. Copernicus was removed from the active v3.5 salinity chain.
 - `services/run_logger.py`: Internal run-record traceability.
 - `utils/constants.py`: App, model, catalog, mission, and API constants.
 - `utils/parsing.py`: UI parsing and formatting helpers.
@@ -81,18 +81,17 @@ Active catalog entries observed:
 
 The Results tab currently assembles:
 
-- Run Summary
-- Energy Planner Summary
-- Energy Storage Equivalence Lens
+- Mission Decision Brief
+- Executive Results Summary
 - METOC Assessment
-- Energy Summary
-- Battery and Sustainment Summary
-- Mission Geometry Summary
-- Environmental Inputs
+- Four-panel visual grid when GPS geometry exists: Mission Map Overlay, Monte Carlo / Uncertainty Distribution, Engineering Geometry Snapshot, and Mission Energy Progress and Battery Lens
+- Energy Detail
+- Battery and Sustainment Detail
 - Sustainment Projection Lens
-- Mission Energy Progress and Battery Lens
-- Mission Energy Uncertainty Distribution
-- Mission Visual Summary
+- Mission Geometry Detail
+- Environmental Detail
+- Energy Storage Equivalence Lens
+- Technical Traceability / Model Detail
 
 ## Known Assumptions Registry
 
@@ -112,7 +111,6 @@ The registry currently includes:
 - `temperature_derating_rationale`
 - `temperature_model_limitation`
 - `salinity_source_policy`
-- `copernicus_salinity_provider_status`
 - `salinity_baseline_psu`
 - `seawater_density_baseline_kg_m3`
 - `payload_mass_penalty_curve`
@@ -184,7 +182,7 @@ Open questions for manual UI testing:
 - Temperature derating is implemented as a usable-capacity curve, not a duplicate demand uplift.
 - Sustainment Projection Lens is implemented as a simplified energy-flow report lens.
 - Payload weight effect is implemented for Payload Delivery and covered by targeted tests.
-- Copernicus Marine provider path is implemented, but live credentialed validation is pending.
+- NOAA CO-OPS station salinity and WOA23 climatology lookup require later live validation in representative areas; standard seawater fallback is active for no-provider conditions.
 - Run logger still writes internal records for traceability, while user-facing CSV/JSON export controls are not exposed.
 
 ## Verification Result

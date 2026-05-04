@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 APP_NAME = "UUV Mission Planning and Energy Simulator"
-APP_VERSION = "v3.3-research-dev"
-ENERGY_MODEL_VERSION = "energy_model_v3_3_research_dev"
-VEHICLE_CATALOG_VERSION = "vehicle_catalog_v3_2_public_baseline"
+APP_VERSION = "v3.5-beta"
+ENERGY_MODEL_VERSION = "energy_model_v3_5_beta"
+VEHICLE_CATALOG_VERSION = "vehicle_catalog_v3_5_public_baseline"
 USER_AGENT = "uuv-capstone-gradio/0.3 (planning-scale research tool)"
 REQUEST_TIMEOUT = 25
 MONTE_CARLO_RUNS = 100
@@ -13,12 +13,6 @@ EARTH_RADIUS_KM = 6371.0088
 
 OPEN_METEO_WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_MARINE_URL = "https://marine-api.open-meteo.com/v1/marine"
-
-COPERNICUS_SALINITY_PRODUCT_ID = "MULTIOBS_GLO_PHY_S_SURFACE_MYNRT_015_013"
-COPERNICUS_SALINITY_DATASET_ID = "cmems_obs-mob_glo_phy-sss_my_multi_P1D"
-COPERNICUS_SALINITY_VARIABLE_CANDIDATES = ("sos", "so", "sss", "sea_surface_salinity")
-COPERNICUS_DENSITY_VARIABLE_CANDIDATES = ("density", "rho", "sea_surface_density", "dos")
-DEFAULT_PAYLOAD_DRY_WEIGHT_FALLBACK_KG = 300.0
 
 MISSION_TYPES = ["ISR", "Area Search / MCM", "Payload Delivery"]
 ISR_MISSIONS = {"ISR", "Intelligence, Surveillance, and Reconnaissance"}

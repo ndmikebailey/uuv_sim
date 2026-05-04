@@ -1,6 +1,6 @@
 # Build Log
 
-Current active build: `v3.0-alpha`
+Current active build: `v3.5-beta`
 
 The detailed configuration-controlled build history is maintained in [docs/BUILD_LOG.md](docs/BUILD_LOG.md).
 

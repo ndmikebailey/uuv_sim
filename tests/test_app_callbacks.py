@@ -7,6 +7,7 @@ import json
 import shutil
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import matplotlib.pyplot as plt
 
@@ -189,7 +190,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
                 self.assertLess(executive_summary.index("The modeled ISR mission"), executive_summary.index("Monte Carlo"))
                 self.assertIn("100 Monte Carlo trials", executive_summary)
                 self.assertIn("using deterministic seed 12345", executive_summary)
-                self.assertIn("patrol-loop endurance problem", executive_summary)
+                self.assertIn("mission-total endurance case", executive_summary)
                 self.assertIn("kWh per loop", executive_summary)
                 self.assertIn("percentile outputs are retained in technical traceability", executive_summary)
                 self.assertIn("Monte Carlo runs", str(result[11]))
@@ -372,7 +373,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertLess(executive_summary.index("The modeled ISR mission"), executive_summary.index("Monte Carlo"))
         self.assertIn("100 Monte Carlo trials", executive_summary)
         self.assertIn("using deterministic seed 12345", executive_summary)
-        self.assertIn("patrol-loop endurance problem", executive_summary)
+        self.assertIn("mission-total endurance case", executive_summary)
         self.assertIn("declared inventory supports", executive_summary)
         self.assertNotIn("None", executive_summary)
         self.assertNotIn("ISR persistence planning", str(result[11]))
@@ -407,6 +408,8 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertRegex(rows["Gigajoules"], r"0\.014 GJ")
         self.assertRegex(rows["Tonnes of oil equivalent"], r"0\.000327 TOE")
         self.assertRegex(rows["Barrel-of-oil equivalent"], r"0\.002235 BOE")
+        fuel_rows = dict(build_energy_equivalence_rows(3.8, "test basis", 0.38))
+        self.assertEqual(fuel_rows["Fuel-equivalent estimate"], "0.38 gal JP-8/diesel")
 
     def test_payload_line_runs_and_isr_accepts_line_geometry(self) -> None:
         """Payload and ISR should both accept line geometry with different mission logic."""
@@ -726,34 +729,41 @@ class AppCallbackSmokeTests(unittest.TestCase):
 
     def test_standalone_simulation_uses_standard_salinity_assumption(self) -> None:
         """Manual standalone simulation should not imply live salinity lookup."""
-        result = main.run_from_ui(
-            "REMUS 300 - 4.5 kWh",
-            "Payload Delivery",
-            10,
-            3,
-            3,
-            10,
-            0,
-            0,
-            200,
-            True,
-            3.5,
-            1,
-            True,
-            1,
-            "",
-            0.5,
-            90,
-            25,
-            {},
-            "Medium",
-            1,
-            "1 month",
-            0.84,
-            0,
-        )
-        self.assertIn("standard_assumption", str(result[5]))
-        self.assertIn("standard seawater assumption used", str(result[5]))
+        with (
+            patch("services.noaa_coops_salinity.NoaaCoopsSalinityProvider.fetch") as coops_fetch,
+            patch("services.woa23_salinity.get_woa23_salinity") as woa_fetch,
+        ):
+            result = main.run_from_ui(
+                "REMUS 300 - 4.5 kWh",
+                "Payload Delivery",
+                10,
+                3,
+                3,
+                10,
+                0,
+                0,
+                200,
+                True,
+                3.5,
+                1,
+                True,
+                1,
+                "",
+                0.5,
+                90,
+                25,
+                {},
+                "Medium",
+                1,
+                "1 month",
+                0.84,
+                0,
+            )
+        coops_fetch.assert_not_called()
+        woa_fetch.assert_not_called()
+        self.assertIn("Salinity source", str(result[5]))
+        self.assertIn("Standard seawater assumption.", str(result[5]))
+        self.assertNotIn("Salinity provider note", str(result[5]))
         self.assertEqual(result[9]["visible"], False)
         self.assertNotIn("Mission Map Overlay", str(result[9].get("value", "")))
         executive_summary = self._executive_summary_text(result[11])

@@ -1,8 +1,8 @@
 # Validation Plan
 
-## v3.3 Research-Development Purpose
+## v3.5 Beta Purpose
 
-The v3.3 research-development build supports controlled dry runs, manual UI testing, and model-review planning. It should not be treated as a final baseline until reproducibility, internal traceability records, source traceability, and test coverage are reviewed.
+The v3.5 beta build supports controlled dry runs, team testing, manual UI testing, and model-review planning. It should not be treated as an operational baseline until reproducibility, internal traceability records, source traceability, and test coverage are reviewed.
 
 ## Dry Run Checklist
 
@@ -12,7 +12,7 @@ The v3.3 research-development build supports controlled dry runs, manual UI test
 4. Confirm mission context loads and simulator inputs prefill.
 5. Override METOC inputs manually and confirm outputs change.
 6. Enter a known Monte Carlo seed and confirm repeatability.
-7. Confirm the user-facing report sections render: Energy Planner Summary, Energy Storage Equivalence Lens, METOC Assessment, Energy Summary, Battery and Sustainment Summary, Mission Geometry Summary, Environmental Inputs, Sustainment Projection Lens, charts, and Mission Visual Summary.
+7. Confirm the user-facing report sections render: Mission Decision Brief, Executive Results Summary, METOC Assessment, Mission Map Overlay when GPS geometry exists, Monte Carlo / Uncertainty Distribution, Engineering Geometry Snapshot, Mission Energy Progress and Battery Lens, Energy Detail, Battery and Sustainment Detail, Sustainment Projection Lens, Mission Geometry Detail, Environmental Detail, Energy Storage Equivalence Lens, and Technical Traceability / Model Detail.
 8. Confirm mission map snapshot renders and the search-pattern overlay appears for Area Search / MCM only.
 
 ## Physical-Test Record Fields

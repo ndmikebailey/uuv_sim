@@ -242,6 +242,15 @@ completed_loops = floor(max_time_on_station_hr / loop_time_hr)
 remaining_partial_loop_pct = (max_time_on_station_hr % loop_time_hr) / loop_time_hr * 100
 ```
 
+For reporting and sustainment planning, ISR now uses mission-total endurance-window energy as the planning basis. Loop energy remains visible for coverage accounting, but the planning energy is the total energy expended across the completed and partial loop set before recovery/swap:
+
+```text
+planning_energy_basis = "mission_total"
+planning_energy_kwh = p95_energy_kwh
+planning_duration_basis = "endurance_window"
+planning_duration_hr = isr_single_set_endurance_hr
+```
+
 Implemented in `core/energy.py::compute_isr_persistence`.
 
 ## Battery Inventory And Recharge Logic
@@ -250,6 +259,8 @@ The model compares P80 mission energy against available inventory:
 
 ```text
 battery_sets_required_p80 = ceil(p80_energy_kwh / usable_battery_per_set_kwh)
+if mission_type == ISR:
+    battery_sets_required_p80 = 1
 battery_shortfall = max(0, battery_sets_required_p80 - battery_sets_available)
 recharge_sequences_required = battery_shortfall if recharge_allowed else 0
 recharge_downtime_hr = recharge_sequences_required * vehicle.recharge_hr
@@ -271,9 +282,10 @@ usable_inventory_energy_per_cycle_kwh = usable_battery_per_set_kwh * battery_set
 inventory_cycles_required = ceil(total_conservative_energy_kwh / usable_inventory_energy_per_cycle_kwh)
 generator_input_energy_kwh = total_conservative_energy_kwh / generator_efficiency
 recharge_energy_required_kwh = max(total_conservative_energy_kwh - usable_inventory_energy_per_cycle_kwh, 0)
+fuel_gallons_equivalent = generator_input_energy_kwh / 10.0
 ```
 
-Fuel gallons are not reported unless a cited conversion factor is selected for the project.
+The fuel-equivalent estimate uses a conservative 10.0 kWh/gal JP-8/diesel tactical-generator planning factor. It is secondary to recharge energy and generator input energy and does not apply another generator-efficiency correction.
 
 Implemented in `core/sustainment.py::compute_sustainment_projection`.
 
@@ -313,12 +325,14 @@ Current behavior:
 
 - Open-Meteo Marine requests omit `sea_surface_salinity` because the endpoint currently returns HTTP 400 for that variable.
 - API parsing accepts `sea_surface_salinity`, `ocean_salinity`, and `salinity` if they appear in a supplied or future payload.
-- Standalone/manual simulation uses the standard seawater assumption and does not call Copernicus.
-- Mission Builder/GPS geometry attempts the optional Copernicus Marine provider path automatically, supplementing salinity and density when configured.
+- Standalone/manual simulation uses the standard seawater assumption and does not call live salinity providers.
+- Mission Builder/GPS geometry preserves Open-Meteo current, SST, wind, and weather, then attempts NOAA CO-OPS station salinity, NOAA WOA23 climatology, and standard seawater in that order.
 - Multi-area Search/MCM attempts one salinity/density lookup per area centroid through the fused METOC service and averages salinity/density as scalar values.
 - Environment table rows and internal run records preserve salinity when available.
-- Missing salinity and reference salinity preserve existing energy behavior.
+- Provider-unavailable and reference-salinity cases preserve existing energy behavior because the standard seawater fallback is 35.0 PSU and 1025.0 kg/m3.
 - Non-reference salinity contributes to `salinity_uplift_pct` and the environmental multiplier.
+- Copernicus was evaluated during development and removed from the active v3.5 salinity chain. HYCOM/GOFS, SMAP, and Argo remain future enhancement or V&V sources only.
+- Salinity and density inputs are planning modifiers only and are not tactical oceanographic authority.
 
 ## Sustainment Projection Output
 
@@ -331,6 +345,7 @@ usable_inventory_energy_per_cycle_kwh = usable_battery_per_set_kwh * battery_set
 inventory_cycles_required = ceil(total_conservative_energy_kwh / usable_inventory_energy_per_cycle_kwh)
 generator_input_energy_kwh = total_conservative_energy_kwh / generator_efficiency
 recharge_energy_required_kwh = max(total_conservative_energy_kwh - usable_inventory_energy_per_cycle_kwh, 0)
+fuel_gallons_equivalent = generator_input_energy_kwh / 10.0
 ```
 
 Implemented in `core/sustainment.py`.

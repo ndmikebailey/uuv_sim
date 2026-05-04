@@ -11,7 +11,7 @@ pinned: false
 ---
 # UUV Mission Planning and Energy Simulator
 
-`v3.3-research-dev` is a Gradio-based research tool for planning single-UUV missions, estimating energy requirements, and reviewing mission geometry with METOC context.
+`v3.5-beta` is a Gradio-based research tool for planning single-UUV missions, estimating energy requirements, and reviewing mission geometry with METOC context.
 
 ## Status
 
@@ -29,7 +29,7 @@ python app.py
 ```text
 app/          Gradio entrypoint, UI wiring, and Leaflet map component
 core/         Pure geometry, mission, energy, and environmental uplift logic
-services/     Open-Meteo clients, Copernicus salinity enrichment, METOC fusion, and internal traceability logging
+services/     Open-Meteo clients, NOAA CO-OPS/WOA23 salinity provider hooks, METOC fusion, and internal traceability logging
 models/       Dataclasses for mission, vehicle, and environment state
 utils/        Constants and parsing helpers
 data/         Vehicle catalog and source register
@@ -61,6 +61,8 @@ Current user-facing outputs include:
 * Mission Visual Summary
 
 ## Tests
+
+Salinity follows the active v3.5 planning hierarchy: NOAA CO-OPS station data when available, NOAA WOA23 climatology when available, and standard seawater assumption otherwise. Copernicus was evaluated during development and removed from the active v3.5 salinity chain. HYCOM/GOFS, SMAP, and Argo remain future enhancement or V&V sources only. The Sustainment Projection Lens includes a secondary fuel-equivalent estimate using a conservative 10.0 kWh/gal JP-8/diesel tactical-generator planning factor.
 
 ```bash
 python test.py

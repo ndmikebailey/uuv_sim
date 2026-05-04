@@ -32,6 +32,13 @@ class SustainmentProjectionTests(unittest.TestCase):
         self.assertEqual(result["total_conservative_energy_kwh"], 0.0)
         self.assertEqual(result["generator_input_energy_kwh"], 0.0)
 
+    def test_fuel_equivalent_uses_generator_input_energy(self) -> None:
+        result = compute_sustainment_projection(5.0, 2.0, 1.0, 2.0, 2, generator_efficiency=0.5)
+        self.assertEqual(result["generator_kwh_per_gallon"], 10.0)
+        self.assertAlmostEqual(result["generator_input_energy_kwh"], 20.0)
+        self.assertAlmostEqual(result["fuel_gallons_equivalent"], 2.0)
+        self.assertEqual(result["fuel_type_label"], "JP-8/diesel tactical-generator planning factor")
+
 
 if __name__ == "__main__":
     unittest.main()

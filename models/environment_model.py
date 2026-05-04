@@ -44,7 +44,9 @@ class EnvironmentData:
     weather_query_params: dict[str, Any] = field(default_factory=dict)
     salinity_query_params: dict[str, Any] = field(default_factory=dict)
     salinity_metadata: dict[str, Any] = field(default_factory=dict)
-    salinity_source: str = "standard_assumption"
+    salinity_source: str = "Standard seawater assumption"
+    salinity_provider_detail: str = ""
+    salinity_validation_status: str = ""
     source: str = "Open-Meteo"
     loaded_at_utc: str = ""
 
@@ -79,7 +81,7 @@ class EnvironmentData:
 
     def table_rows(self, centroid_lat: float, centroid_lon: float) -> list[tuple[str, object, str]]:
         """Return operator-facing environment rows."""
-        return [
+        rows = [
             ("Environment lookup latitude", centroid_lat, "deg"),
             ("Environment lookup longitude", centroid_lon, "deg"),
             ("Current speed mean", self.current_speed_kts_mean, "kts"),
@@ -87,7 +89,6 @@ class EnvironmentData:
             ("Sea surface temperature", self.sea_surface_temp_c_mean, "deg C"),
             ("Sea surface salinity", self.sea_surface_salinity_psu, "PSU"),
             ("Sea water density", self.sea_water_density_kg_m3, "kg/m3"),
-            ("Salinity source", self.salinity_source, ""),
             ("Sea level height MSL", self.sea_level_height_m, "m"),
             ("Wave height", self.wave_height_m, "m"),
             ("Wave direction", self.wave_direction_deg, "deg"),
@@ -100,3 +101,6 @@ class EnvironmentData:
             ("Pressure MSL", self.pressure_msl_hpa, "hPa"),
             ("Weather summary", self.weather_summary, ""),
         ]
+        if self.salinity_source:
+            rows.insert(7, ("Salinity source", self.salinity_source, ""))
+        return rows
