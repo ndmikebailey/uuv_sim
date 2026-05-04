@@ -47,7 +47,7 @@ Vehicle assumptions are loaded from `data/vehicle_catalog.json`.
 * Total projected energy is `planning_energy_kwh * operations_per_week * planning_weeks`.
 * Inventory cycles are based on total projected energy divided by declared usable inventory energy.
 * Generator input energy is the already efficiency-adjusted generator-side energy requirement. The fuel-equivalent estimate uses `fuel_gallons_equivalent = generator_input_energy_kwh / 10.0`.
-* Fuel-equivalent estimate uses a conservative 10.0 kWh/gal JP-8/diesel tactical-generator planning factor. This is a sustainment-planning estimate, not a generator certification curve.
+* Fuel-equivalent estimate is based on generator input energy and uses a conservative 10.0 kWh/gal JP-8/diesel tactical-generator planning factor. This is a sustainment-planning estimate, not a generator certification curve.
 
 ## Geometry
 

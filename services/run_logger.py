@@ -198,6 +198,7 @@ def build_energy_planner_csv_row(
     reserve_energy = max(float(summary.get("battery_nameplate_kwh") or vehicle.battery_kwh) - usable_per_set, 0.0)
     p80_shortfall_kwh = max(p80 - total_available, 0.0)
     battery_shortfall_sets = int(summary.get("battery_shortfall_p80") or 0)
+    one_way_inventory = summary.get("vehicle_rechargeable") is False
     recharge_required = battery_shortfall_sets > 0
     inventory_sufficient = bool(summary.get("battery_inventory_sufficient_no_recharge"))
     metoc_lat, metoc_lon = _metoc_lookup_point(environment)
@@ -212,9 +213,12 @@ def build_energy_planner_csv_row(
 
     estimated_recharge_need = "None"
     if recharge_required:
-        estimated_recharge_need = f"{battery_shortfall_sets} battery set(s) or recharge/swap sequence(s)"
-        if not bool(summary.get("recharge_allowed")):
+        if one_way_inventory:
+            estimated_recharge_need = f"{battery_shortfall_sets} additional vehicle unit(s) required"
+        elif not bool(summary.get("recharge_allowed")):
             estimated_recharge_need = f"{battery_shortfall_sets} additional battery set(s) required; recharge not enabled"
+        else:
+            estimated_recharge_need = f"{battery_shortfall_sets} battery set(s) or recharge/swap sequence(s)"
 
     row: dict[str, Any] = {field: "" for field in ENERGY_PLANNER_CSV_FIELDS}
     row.update(

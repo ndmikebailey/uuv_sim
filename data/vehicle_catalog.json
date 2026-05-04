@@ -220,7 +220,7 @@
     "rechargeable": false,
     "default_payload_recovery_mode": "one_way",
     "usable_fraction": 1.0,
-    "usable_basis": "Planning assumption: 100% usable. One-way expendable effector.",
+    "usable_basis": "Planning assumption: 100% usable. One-way non-rechargeable vehicle inventory.",
     "source_note": "Baseline estimated from Raytheon/Navy public A-size sonobuoy form factor specifications (26 lbs, 48-inch length)."
   },
   "Next-Gen MUUV (REMUS 620)": {

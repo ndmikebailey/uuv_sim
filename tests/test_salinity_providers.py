@@ -160,10 +160,11 @@ class SalinityProviderTests(unittest.TestCase):
                 "sustainment_generator_input_energy_kwh": 12.0,
                 "sustainment_generator_kwh_per_gallon": 10.0,
                 "sustainment_fuel_gallons_equivalent": 1.2,
+                "in_mission_recharge_shortfall_kwh": 3.0,
             }
         )
-        self.assertIn(("Recharge energy required", 3.0, "kWh"), rows)
-        self.assertIn(("Generator input energy", 12.0, "kWh"), rows)
+        self.assertIn(("In-mission recharge shortfall", 3.0, "kWh"), rows)
+        self.assertIn(("Generator input energy to reset consumed energy", 12.0, "kWh"), rows)
         self.assertNotIn(("Fuel-equivalent estimate", 1.2, "gal JP-8/diesel"), rows)
 
 

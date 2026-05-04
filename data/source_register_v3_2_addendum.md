@@ -20,7 +20,7 @@ This addendum records the public vehicle data used to update `data/vehicle_catal
 | Iver4 900 (Expeditionary MCM) | Validated public-facing system notes and public spec sheets | 2.0 kWh, 14 hr endurance, 3 kt nominal speed, 5 kt max speed, 5 hr recharge | Expeditionary MCM planning entry from public Iver4 900 specifications. |
 | MK19 Mod 0 Razorback (DDS) | Validated public-facing system notes and public spec sheets | 7.0 kWh, 24 hr endurance, 3 kt nominal speed, 4 kt max speed, no recharge | Legacy DDS UUV based on REMUS 600 alkaline battery configuration. |
 | MK20 Mod 0 Razorback (TTL&R) | Validated public-facing system notes and public spec sheets | 5.2 kWh, 18.4 hr endurance, 3 kt nominal speed, 6 kt max speed, 8 hr recharge | Submarine TTL&R MUUV planning entry. |
-| AN/AQS-23 Barracuda | Validated public-facing system notes and public spec sheets | 0.8 kWh, 1.5 hr endurance, 4 kt nominal speed, 10 kt max speed, no recharge | One-way expendable effector planning entry. |
+| AN/AQS-23 Barracuda | Validated public-facing system notes and public spec sheets | 0.8 kWh, 1.5 hr endurance, 4 kt nominal speed, 10 kt max speed, no recharge | One-way non-rechargeable vehicle inventory planning entry. |
 | Next-Gen MUUV (REMUS 620) | HII REMUS 620 public specifications recorded in project notes | 15.0 kWh, 110 hr endurance, 3 kt nominal speed, 8 kt max speed, 12 hr recharge | Extended multi-day TTL&R and expeditionary planning entry. |
 
 ## Shared planning factors

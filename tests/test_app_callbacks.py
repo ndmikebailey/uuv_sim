@@ -12,7 +12,15 @@ from unittest.mock import patch
 import matplotlib.pyplot as plt
 
 import app.main as main
-from app.ui.reporting import build_energy_equivalence_rows
+from app.ui.reporting import (
+    build_battery_detail_helper,
+    build_battery_sustainment_rows,
+    build_energy_equivalence_rows,
+    build_engineering_snapshot_caption,
+    build_energy_planner_summary_html,
+    build_sustainment_projection_rows,
+)
+from core.geometry import manual_rectangle_area
 from models.environment_model import EnvironmentData
 from utils.constants import APP_VERSION, ENERGY_MODEL_VERSION
 
@@ -165,7 +173,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
             with self.subTest(geometry=geometry["geometry_type"]):
                 _, result = self._run_isr_geometry(geometry)
                 self.assertEqual(len(result), 15)
-                self.assertIn("Estimated ISR endurance", str(result[0]))
+                self.assertIn("ISR endurance estimate", str(result[0]))
                 self.assertEqual(result[1]["value"], "Go to Results")
                 self.assertEqual(result[1]["interactive"], True)
                 self.assertIn("isr_loop_distance_km", result[10])
@@ -246,7 +254,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
         )
         self.assertIn("Recommended track orientation", str(result[0]))
         self.assertIn("Mission Decision Brief", str(result[11]))
-        self.assertIn("Feasible. The selected platform can complete the search/MCM plan", str(result[11]))
+        self.assertIn("Feasible. The selected platform can complete the mission with declared charged battery inventory.", str(result[11]))
         self.assertNotIn("Search/MCM planning", str(result[11]))
         executive_summary = self._executive_summary_text(result[11])
         self.assertIn("Executive Results Summary", executive_summary)
@@ -275,6 +283,43 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertIn("Area:", str(result[14]))
         self.assertIn("Track spacing:", str(result[14]))
         self.assertIn("Orientation:", str(result[14]))
+
+    def test_search_area_report_uses_canonical_simulation_area(self) -> None:
+        """Search executive text, geometry detail, and visual caption should use the same polygon area."""
+        built = main.build_mission_and_prefill("Area Search / MCM", json.dumps(CONVEX_POLYGON_GEOMETRY))
+        self.assertTrue(built[0], built[1])
+        result = main.run_from_ui(
+            "REMUS 300 - 4.5 kWh",
+            "Area Search / MCM",
+            10,
+            3,
+            3,
+            10,
+            0,
+            0,
+            200,
+            True,
+            3.5,
+            2,
+            True,
+            1,
+            "12345",
+            0.6,
+            85,
+            26,
+            built[0],
+        )
+        summary = result[10]
+        canonical_area = float(summary["total_search_area_km2"])
+        self.assertAlmostEqual(canonical_area, float(summary["search_area_km2"]), places=3)
+        area_text = f"{canonical_area:.1f} sq km"
+        executive_summary = self._executive_summary_text(result[11])
+        self.assertIn(area_text, executive_summary)
+        self.assertIn(area_text, str(result[4]))
+        self.assertIn(area_text, build_engineering_snapshot_caption(summary))
+        bbox_area = float(summary["search_width_km"]) * float(summary["search_height_km"])
+        if abs(bbox_area - canonical_area) > 0.05:
+            self.assertNotIn(f"{bbox_area:.1f} sq km", executive_summary)
         self.assertIn("Lanes:", str(result[14]))
         self.assertNotIn("isr_loop_distance_km", result[10])
 
@@ -409,7 +454,294 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertRegex(rows["Tonnes of oil equivalent"], r"0\.000327 TOE")
         self.assertRegex(rows["Barrel-of-oil equivalent"], r"0\.002235 BOE")
         fuel_rows = dict(build_energy_equivalence_rows(3.8, "test basis", 0.38))
-        self.assertEqual(fuel_rows["Fuel-equivalent estimate"], "0.38 gal JP-8/diesel")
+        self.assertEqual(fuel_rows["Fuel-equivalent estimate based on generator input energy"], "0.38 gal JP-8/diesel")
+
+    def test_battery_sustainment_rows_match_negative_energy_margins(self) -> None:
+        """Battery detail should not hide P80/P95 shortfalls behind ISR set wording."""
+        summary = {
+            "mission_type": "ISR",
+            "usable_battery_per_set_kwh": 13.2,
+            "battery_nameplate_kwh": 15.0,
+            "p80_energy_kwh": 13.6,
+            "p95_energy_kwh": 13.8,
+            "total_available_kwh": 13.2,
+            "battery_sets_available": 1,
+            "battery_sets_required_p80": 2,
+            "battery_inventory_sufficient_no_recharge": False,
+            "operator_reserve_fraction": 0.0,
+            "sustainment_generator_efficiency": 0.84,
+        }
+        rows = {label: value for label, value, _ in build_battery_sustainment_rows(summary)}
+        self.assertAlmostEqual(rows["Planning-level shortfall (P80)"], 0.4)
+        self.assertAlmostEqual(rows["Conservative shortfall (P95)"], 0.6)
+        self.assertEqual(rows["Planning-level battery inventory sufficient (P80)"], "No")
+        self.assertEqual(rows["Conservative battery inventory sufficient (P95)"], "No")
+        self.assertEqual(rows["Battery sets required at planning level (P80)"], 2)
+        self.assertEqual(rows["Battery sets required at conservative level (P95)"], 2)
+        self.assertIn("Nameplate-to-usable allowance per set", rows)
+        self.assertNotIn("Reserve energy per set", rows)
+
+    def test_inventory_coverage_and_generator_labels_use_true_basis(self) -> None:
+        """Report labels should show over-100% usage and generator-input fuel basis."""
+        summary = {
+            "total_available_kwh": 13.2,
+            "p80_energy_kwh": 13.6,
+            "p95_energy_kwh": 13.8,
+            "sustainment_projection_enabled": True,
+            "sustainment_planning_weeks": 1,
+            "sustainment_missions_per_week": 1,
+            "sustainment_total_missions": 1,
+            "sustainment_conservative_energy_per_mission_kwh": 13.8,
+            "sustainment_total_conservative_energy_kwh": 13.8,
+            "sustainment_usable_inventory_energy_per_cycle_kwh": 13.2,
+            "sustainment_inventory_cycles_required": 2,
+            "sustainment_recharge_energy_required_kwh": 0.6,
+            "sustainment_generator_efficiency": 0.84,
+            "sustainment_generator_input_energy_kwh": 16.43,
+            "sustainment_generator_kwh_per_gallon": 10.0,
+        }
+        helper = build_battery_detail_helper(summary)
+        self.assertIn("P80 uses 103.0% of inventory", helper)
+        self.assertIn("P95 uses 104.5%", helper)
+        self.assertIn("Visual gauge capped at 100%", helper)
+        sustainment_rows = {label: value for label, value, _ in build_sustainment_projection_rows(summary)}
+        self.assertEqual(sustainment_rows["Generator efficiency"], "84%")
+
+    def test_recharge_feasibility_rows_and_bluf_distinguish_charged_inventory(self) -> None:
+        """Charged-inventory feasible cases should not require recharge cycling."""
+        summary = {
+            "mission_type": "Area Search / MCM",
+            "platform": "Test UUV",
+            "p50_energy_kwh": 3.5,
+            "p80_energy_kwh": 4.2,
+            "p95_energy_kwh": 5.0,
+            "planning_energy_kwh": 5.0,
+            "planning_energy_basis": "mission_total",
+            "usable_battery_per_set_kwh": 2.0,
+            "battery_sets_available": 3,
+            "battery_sets_required_p80": 3,
+            "total_available_kwh": 6.0,
+            "mean_duration_hr": 10.0,
+            "battery_inventory_sufficient_no_recharge": True,
+            "vehicle_rechargeable": True,
+            "recharge_allowed": True,
+            "recharge_feasibility_category": "charged_inventory",
+            "recharge_feasibility_status": "Charged inventory sufficient",
+            "runtime_per_battery_set_hr": 4.0,
+            "recharge_time_per_set_hr": 3.0,
+            "available_recharge_window_hr": 8.0,
+            "recharge_bottleneck": False,
+            "in_mission_recharge_shortfall_kwh": 0.0,
+            "recharge_energy_required_during_mission_kwh": 0.0,
+        }
+        rows = {label: value for label, value, _ in build_battery_sustainment_rows(summary)}
+        self.assertEqual(rows["Recharge feasibility status"], "Charged inventory sufficient")
+        self.assertEqual(rows["Runtime per battery set"], 4.0)
+        self.assertEqual(rows["Recharge time per set"], 3.0)
+        self.assertEqual(rows["Available recharge window before set reuse"], 8.0)
+        html = build_energy_planner_summary_html(summary, manual_rectangle_area(3.0, 3.0, 9.0), EnvironmentData())
+        self.assertIn("Feasible. The selected platform can complete the mission with declared charged battery inventory.", html)
+
+    def test_recharge_supported_shortfall_is_not_labeled_not_feasible(self) -> None:
+        """Recharge-supported missions should be feasible when rotation window beats recharge time."""
+        summary = {
+            "mission_type": "Area Search / MCM",
+            "platform": "Test UUV",
+            "p50_energy_kwh": 7.5,
+            "p80_energy_kwh": 8.0,
+            "p95_energy_kwh": 8.4,
+            "planning_energy_kwh": 8.4,
+            "planning_energy_basis": "mission_total",
+            "usable_battery_per_set_kwh": 1.3,
+            "battery_sets_available": 4,
+            "battery_sets_required_p80": 7,
+            "total_available_kwh": 5.2,
+            "mean_duration_hr": 54.3,
+            "battery_inventory_sufficient_no_recharge": False,
+            "vehicle_rechargeable": True,
+            "recharge_allowed": True,
+            "recharge_feasibility_category": "recharge_supported",
+            "recharge_feasibility_status": "Feasible with continuous recharge/swap support",
+            "runtime_per_battery_set_hr": 8.4,
+            "recharge_time_per_set_hr": 6.0,
+            "available_recharge_window_hr": 25.2,
+            "recharge_bottleneck": False,
+            "in_mission_recharge_shortfall_kwh": 3.2,
+            "recharge_energy_required_during_mission_kwh": 3.2,
+        }
+        html = build_energy_planner_summary_html(summary, manual_rectangle_area(3.0, 3.0, 9.0), EnvironmentData())
+        self.assertIn("Feasible with continuous recharge/swap support", html)
+        self.assertIn("Initial charged inventory is short by 3.2 kWh", html)
+        self.assertNotIn("Not feasible under current recharge assumptions", html)
+        rows = {label: value for label, value, _ in build_sustainment_projection_rows({**summary, "sustainment_projection_enabled": True})}
+        self.assertEqual(rows["In-mission recharge shortfall"], 3.2)
+
+    def test_recharge_bottleneck_and_non_rechargeable_cases_are_distinct(self) -> None:
+        """Recharge bottlenecks and one-way platforms should not share recharge-supported wording."""
+        bottleneck = {
+            "mission_type": "Area Search / MCM",
+            "platform": "Test UUV",
+            "p50_energy_kwh": 7.5,
+            "p80_energy_kwh": 8.0,
+            "p95_energy_kwh": 8.4,
+            "planning_energy_kwh": 8.4,
+            "planning_energy_basis": "mission_total",
+            "usable_battery_per_set_kwh": 1.3,
+            "battery_sets_available": 4,
+            "battery_sets_required_p80": 7,
+            "total_available_kwh": 5.2,
+            "mean_duration_hr": 54.3,
+            "battery_inventory_sufficient_no_recharge": False,
+            "vehicle_rechargeable": True,
+            "recharge_allowed": True,
+            "recharge_feasibility_category": "recharge_bottleneck",
+            "recharge_feasibility_status": "Recharge bottleneck",
+            "runtime_per_battery_set_hr": 8.4,
+            "recharge_time_per_set_hr": 30.0,
+            "available_recharge_window_hr": 25.2,
+            "recharge_bottleneck": True,
+            "in_mission_recharge_shortfall_kwh": 3.2,
+            "recharge_energy_required_during_mission_kwh": 3.2,
+        }
+        html = build_energy_planner_summary_html(bottleneck, manual_rectangle_area(3.0, 3.0, 9.0), EnvironmentData())
+        self.assertIn("Not feasible under current recharge assumptions", html)
+        self.assertIn("recharge cycle cannot recover depleted sets before reuse", html)
+
+        one_way = {**bottleneck, "vehicle_rechargeable": False, "recharge_feasibility_category": "not_applicable", "recharge_feasibility_status": "Not applicable for one-way/non-rechargeable vehicle"}
+        one_way_rows = build_battery_sustainment_rows(one_way)
+        rows = {label: value for label, value, _ in one_way_rows}
+        self.assertEqual(rows["Recharge feasibility status"], "Not applicable for one-way/non-rechargeable vehicle")
+        self.assertIn("Runtime per vehicle unit", rows)
+        self.assertIn("Replacement inventory required", rows)
+        self.assertIn("Replacement inventory shortfall", rows)
+        labels = [label for label, _, _ in one_way_rows]
+        self.assertNotIn("Recharge time per set", labels)
+        self.assertNotIn("Available recharge window before set reuse", labels)
+        self.assertNotIn("Recharge bottleneck", labels)
+        self.assertNotIn("Recharge energy required during mission", labels)
+        sustainment_rows = {label: value for label, value, _ in build_sustainment_projection_rows({**one_way, "sustainment_inventory_cycles_required": 3, "sustainment_generator_input_energy_kwh": 12.0})}
+        self.assertIn("Generator input energy equivalent", sustainment_rows)
+        self.assertNotIn("Generator input energy to reset consumed energy", sustainment_rows)
+
+    def test_recharge_disabled_rechargeable_vehicle_is_not_one_way(self) -> None:
+        """Rechargeable vehicles with recharge disabled should not appear non-rechargeable."""
+        result = main.run_from_ui(
+            "REMUS 300 - 4.5 kWh",
+            "Payload Delivery",
+            10,
+            3,
+            3,
+            120,
+            90,
+            0,
+            200,
+            True,
+            3.5,
+            1,
+            False,
+            1,
+            "11223",
+            0.6,
+            85,
+            26,
+            {},
+        )
+        report_text = f"{result[0]} {result[3]} {result[11]}"
+        self.assertIn("Recharge not enabled", report_text)
+        self.assertNotIn("Not applicable for one-way/non-rechargeable vehicle", report_text)
+
+    def test_rechargeable_status_reports_recharge_bottleneck_when_rotation_fails(self) -> None:
+        """Rechargeable platforms should report a bottleneck when recharge cannot keep up."""
+        result = main.run_from_ui(
+            "REMUS 100B - 1.5 kWh",
+            "Payload Delivery",
+            10,
+            3,
+            3,
+            500,
+            90,
+            0,
+            200,
+            True,
+            3.5,
+            1,
+            True,
+            1,
+            "24680",
+            0.6,
+            85,
+            26,
+            {},
+        )
+        status = str(result[0])
+        self.assertIn("Planning-level battery sets required", status)
+        self.assertIn("recharge cycle is a bottleneck under current assumptions", status)
+
+    def test_isr_run_status_uses_endurance_language_not_generic_bottleneck(self) -> None:
+        """ISR status should follow ISR endurance feasibility rather than generic recharge status."""
+        built = main.build_mission_and_prefill("ISR", json.dumps(RECTANGLE_GEOMETRY))
+        self.assertTrue(built[0], built[1])
+        result = main.run_from_ui(
+            "Next-Gen MUUV (REMUS 620)",
+            "ISR",
+            10,
+            3,
+            3,
+            10,
+            0,
+            0,
+            200,
+            True,
+            3.5,
+            1,
+            True,
+            1,
+            "12345",
+            0.6,
+            85,
+            26,
+            built[0],
+        )
+        status = str(result[0])
+        self.assertIn("ISR endurance estimate", status)
+        self.assertIn("completed patrol loops", status)
+        self.assertNotIn("recharge cycle is a bottleneck", status)
+        self.assertNotIn("Battery inventory shortfall", status)
+
+    def test_one_way_non_rechargeable_report_uses_vehicle_inventory_language(self) -> None:
+        """Non-rechargeable platforms should use vehicle-unit inventory wording."""
+        result = main.run_from_ui(
+            "AN/AQS-23 Barracuda",
+            "Payload Delivery",
+            10,
+            3,
+            3,
+            50,
+            90,
+            0,
+            200,
+            True,
+            4.0,
+            1,
+            True,
+            1,
+            "13579",
+            0.6,
+            85,
+            26,
+            {},
+        )
+        status = str(result[0])
+        report_text = " ".join(str(result[index]) for index in (2, 3, 11))
+        normal_output = f"{status} {report_text}"
+        self.assertIn("Planning-level vehicle units required", status)
+        self.assertIn("Vehicle inventory", normal_output)
+        self.assertIn("one-way inventory", normal_output)
+        self.assertNotIn("recharge/swap sequence required", normal_output)
+        self.assertNotIn("Recharge/swap required", normal_output)
+        self.assertNotIn("Battery sets required", normal_output)
+        self.assertNotIn("effector", normal_output.lower())
+        self.assertIn("non-rechargeable", str(result[11]).lower())
 
     def test_payload_line_runs_and_isr_accepts_line_geometry(self) -> None:
         """Payload and ISR should both accept line geometry with different mission logic."""
@@ -520,7 +852,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
             26,
             isr_line[0],
         )
-        self.assertIn("Estimated ISR endurance", str(isr_run[0]))
+        self.assertIn("ISR endurance estimate", str(isr_run[0]))
         self.assertEqual(isr_run[10]["isr_patrol_geometry"], "line")
         self.assertEqual(isr_run[10]["mission_sequences"], 1)
         self.assertEqual(isr_run[8]["visible"], True)

@@ -17,6 +17,10 @@ pinned: false
 
 This repository is an academic research artifact. It is intended for controlled dry runs, early physical-test planning, and model-development review. It is not an operational navigation, safety, or tactical decision tool.
 
+## v3.5-beta Highlights
+
+The v3.5-beta release candidate includes the Mission Builder, Single-UUV Simulator, and Results workflow for Payload, ISR, and Search/MCM mission modes; GPS mission map overlays with engineering snapshots; the NOAA CO-OPS / NOAA WOA23 / standard seawater salinity chain; recharge feasibility and fuel-equivalent sustainment lenses; one-way/non-rechargeable vehicle inventory wording; and report decision brief plus technical traceability sections.
+
 ## Run Locally
 
 ```bash
@@ -62,7 +66,7 @@ Current user-facing outputs include:
 
 ## Tests
 
-Salinity follows the active v3.5 planning hierarchy: NOAA CO-OPS station data when available, NOAA WOA23 climatology when available, and standard seawater assumption otherwise. Copernicus was evaluated during development and removed from the active v3.5 salinity chain. HYCOM/GOFS, SMAP, and Argo remain future enhancement or V&V sources only. The Sustainment Projection Lens includes a secondary fuel-equivalent estimate using a conservative 10.0 kWh/gal JP-8/diesel tactical-generator planning factor.
+Salinity follows the active v3.5 planning hierarchy: NOAA CO-OPS station data when available, NOAA WOA23 climatology when available, and standard seawater assumption otherwise. Copernicus was evaluated during development and removed from the active v3.5 salinity chain. HYCOM/GOFS, SMAP, and Argo remain future enhancement or V&V sources only. Salinity and density are planning modifiers only and are not tactical oceanographic authority. The Sustainment Projection Lens includes a secondary fuel-equivalent estimate using a conservative 10.0 kWh/gal JP-8/diesel tactical-generator planning factor.
 
 ```bash
 python test.py

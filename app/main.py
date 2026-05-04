@@ -572,30 +572,68 @@ def run_from_ui(
                 "metoc_aggregation_method": "area-centroid vector average",
             }
         )
+    elif mission_type in SEARCH_MISSIONS:
+        summary["number_of_search_areas"] = 1
+        summary["total_search_area_km2"] = area.area_km2
+        summary["search_area_km2"] = area.area_km2
     summary["return_to_start"] = summary.get("payload_recovery_mode") == "return_to_start"
     summary["additional_transit_km"] = safe_float(additional_transit_km, 0.0) or 0.0
-    status = (
-        f"Simulation complete. Conservative mission energy: {float(summary['p95_energy_kwh']):.1f} kWh (P95). "
-        f"Planning-level battery sets required: {summary['battery_sets_required_p80']} (P80)."
-    )
-    if summary["battery_inventory_sufficient_no_recharge"]:
-        status += " Battery inventory is sufficient without recharge."
-    elif summary.get("vehicle_rechargeable") is False:
-        status += f" Inventory shortfall: {summary['battery_shortfall_p80']} set(s); plan replacement one-way inventory or energy production."
-    elif summary.get("recharge_allowed"):
-        status += f" Battery inventory shortfall: {summary['battery_shortfall_p80']} set(s); recharge/swap sequence required."
-    else:
-        status += f" Battery inventory shortfall: {summary['battery_shortfall_p80']} set(s); recharge is not enabled."
-    if mission_type in SEARCH_MISSIONS:
-        status += f" Recommended track orientation: {summary['recommended_track_orientation']}."
+    one_way_inventory = summary.get("vehicle_rechargeable") is False
+    inventory_label = "vehicle units" if one_way_inventory else "battery sets"
     if mission_type in ISR_MISSIONS:
-        status += (
-            f" Estimated ISR endurance: {float(summary.get('isr_total_inventory_endurance_hr', 0)):.1f} hr using available inventory; "
-            f"completed patrol loops using inventory: {summary.get('isr_completed_loops_total_inventory', 0)}."
+        endurance = float(summary.get("isr_total_inventory_endurance_hr", 0) or 0)
+        loops = int(summary.get("isr_completed_loops_total_inventory", 0) or 0)
+        shortfall_kwh = max(float(summary.get("p95_energy_kwh", 0) or 0) - float(summary.get("total_available_kwh", 0) or 0), 0.0)
+        if loops >= 1:
+            status = (
+                f"Simulation complete. ISR endurance estimate: {endurance:.1f} hr using available inventory; "
+                f"completed patrol loops: {loops}."
+            )
+            if shortfall_kwh > 0:
+                status += f" Conservative margin shortfall: {shortfall_kwh:.1f} kWh."
+            status += " Plan recovery at the endurance window."
+        else:
+            partial_km = float(summary.get("isr_partial_loop_distance_km_total_inventory") or summary.get("isr_partial_loop_distance_km_single_set") or 0)
+            status = (
+                f"Simulation complete. ISR endurance estimate: {endurance:.1f} hr; "
+                f"partial patrol coverage: {partial_km:.1f} km. Full patrol loop not completed."
+            )
+        status += " Go to Results tab. Your simulation is ready."
+        summary["rng_seed_requested"] = parsed_seed
+        summary["rng_seed_used"] = summary.get("rng_seed")
+    else:
+        status = (
+            f"Simulation complete. Conservative mission energy: {float(summary['p95_energy_kwh']):.1f} kWh (P95). "
+            f"Planning-level {inventory_label} required: {summary['battery_sets_required_p80']} (P80)."
         )
-    status += " Go to Results tab. Your simulation is ready."
-    summary["rng_seed_requested"] = parsed_seed
-    summary["rng_seed_used"] = summary.get("rng_seed")
+        recharge_category = str(summary.get("recharge_feasibility_category") or "")
+        if not one_way_inventory and recharge_category == "charged_inventory":
+            status += " Battery inventory is sufficient without recharge."
+        elif not one_way_inventory and recharge_category == "recharge_supported":
+            status += (
+                f" Initial charged inventory is short by {float(summary.get('in_mission_recharge_shortfall_kwh') or 0.0):.1f} kWh, "
+                "but continuous recharge/swap support prevents a battery-cycle bottleneck."
+            )
+        elif not one_way_inventory and recharge_category == "recharge_bottleneck":
+            status += f" Battery inventory shortfall: {summary['battery_shortfall_p95']} set(s); recharge cycle is a bottleneck under current assumptions."
+        elif not one_way_inventory and recharge_category == "recharge_disabled" and float(summary.get("in_mission_recharge_shortfall_kwh") or 0.0) > 0:
+            status += f" Battery inventory shortfall: {summary['battery_shortfall_p95']} set(s); recharge is not enabled."
+        elif summary["battery_inventory_sufficient_no_recharge"]:
+            if one_way_inventory:
+                status += " Vehicle inventory is sufficient for the modeled one-way requirement."
+            else:
+                status += " Battery inventory is sufficient without recharge."
+        elif one_way_inventory:
+            status += f" Vehicle inventory shortfall: {summary['battery_shortfall_p80']} unit(s); add one-way inventory or reduce mission burden."
+        elif summary.get("recharge_allowed"):
+            status += f" Battery inventory shortfall: {summary['battery_shortfall_p80']} set(s); recharge/swap sequence required."
+        else:
+            status += f" Battery inventory shortfall: {summary['battery_shortfall_p80']} set(s); recharge is not enabled."
+        if mission_type in SEARCH_MISSIONS:
+            status += f" Recommended track orientation: {summary['recommended_track_orientation']}."
+        status += " Go to Results tab. Your simulation is ready."
+        summary["rng_seed_requested"] = parsed_seed
+        summary["rng_seed_used"] = summary.get("rng_seed")
 
     simulation_inputs = {
         "additional_transit_km": safe_float(additional_transit_km, 0.0) or 0.0,
@@ -634,7 +672,7 @@ def run_from_ui(
         + build_detail_section_html(
             build_sustainment_projection_rows(summary),
             "Sustainment Projection Lens",
-            "The sustainment lens is an energy-flow projection for the selected horizon and operations tempo. Fuel-equivalent estimate uses a conservative 10.0 kWh/gal JP-8/diesel tactical-generator planning factor. This is a sustainment-planning estimate, not a generator certification curve.",
+            "The sustainment lens is an energy-flow projection for the selected horizon and operations tempo. Fuel-equivalent estimate is based on generator input energy using a conservative 10.0 kWh/gal JP-8/diesel tactical-generator planning factor. This is a sustainment-planning estimate, not a generator certification curve.",
             build_sustainment_projection_helper(summary),
         )
     )
@@ -673,7 +711,13 @@ def run_from_ui(
         int(summary["battery_sets_required_p80"]),
         mission_type=mission_type,
     )
-    fig_dist = build_distribution_chart(result.energy_samples_kwh, float(summary["p80_energy_kwh"]), float(summary["total_available_kwh"]), mission_type=mission_type)
+    fig_dist = build_distribution_chart(
+        result.energy_samples_kwh,
+        float(summary["p80_energy_kwh"]),
+        float(summary["total_available_kwh"]),
+        mission_type=mission_type,
+        inventory_label="Vehicle inventory" if one_way_inventory else "Battery inventory",
+    )
     fig_snapshot = build_mapping_snapshot_chart(summary, area, environment, safe_float(track_spacing_m, 200.0) or 200.0)
     engineering_snapshot_caption = (
         f"<div class='engineering-snapshot-caption'>{build_engineering_snapshot_caption(summary)}</div>"

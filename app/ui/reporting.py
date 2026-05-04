@@ -194,14 +194,17 @@ def build_battery_detail_helper(summary: dict[str, object]) -> str:
     p95 = _as_float(summary.get("p95_energy_kwh"))
     if not total or total <= 0 or p80 is None:
         return ""
-    p80_pct = min(max(p80 / total * 100.0, 0.0), 100.0)
-    p95_pct = min(max((p95 or p80) / total * 100.0, 0.0), 100.0)
+    p80_pct = max(p80 / total * 100.0, 0.0)
+    p95_pct = max((p95 or p80) / total * 100.0, 0.0)
+    p80_bar_pct = min(p80_pct, 100.0)
+    p95_bar_pct = min(p95_pct, 100.0)
+    cap_note = " Visual gauge capped at 100%." if p80_pct > 100.0 or p95_pct > 100.0 else ""
     return (
         "<div class='section-insight-card'>"
         "<div class='mini-title'>Usable inventory coverage</div>"
-        f"<div class='mini-bar'><span class='mini-fill planning' style='width:{p80_pct:.1f}%'></span></div>"
-        f"<div class='mini-bar secondary'><span class='mini-fill conservative' style='width:{p95_pct:.1f}%'></span></div>"
-        f"<div class='mini-caption'>P80 uses {fmt1(p80_pct)}% of inventory; P95 uses {fmt1(p95_pct)}%.</div>"
+        f"<div class='mini-bar'><span class='mini-fill planning' style='width:{p80_bar_pct:.1f}%'></span></div>"
+        f"<div class='mini-bar secondary'><span class='mini-fill conservative' style='width:{p95_bar_pct:.1f}%'></span></div>"
+        f"<div class='mini-caption'>P80 uses {fmt1(p80_pct)}% of inventory; P95 uses {fmt1(p95_pct)}%.{cap_note}</div>"
         "</div>"
     )
 
@@ -416,10 +419,29 @@ def _plain_status_text(summary: dict[str, object]) -> tuple[str, str]:
     margin_p80 = (total_available - p80) if total_available is not None and p80 is not None else None
     conservative_ok = sets_available is not None and sets_p95 is not None and sets_p95 <= sets_available
     planning_ok = sets_available is not None and sets_p80 is not None and sets_p80 <= sets_available
+    one_way_inventory = summary.get("vehicle_rechargeable") is False
+    recharge_category = str(summary.get("recharge_feasibility_category") or "")
+    shortfall = _as_float(summary.get("in_mission_recharge_shortfall_kwh")) or 0.0
+    if not one_way_inventory:
+        if recharge_category == "charged_inventory":
+            return "Feasible", "Feasible. The selected platform can complete the mission with declared charged battery inventory."
+        if recharge_category == "recharge_supported":
+            return (
+                "Feasible with continuous recharge/swap support",
+                f"Feasible with continuous recharge/swap support. Initial charged inventory is short by {fmt1(shortfall)} kWh, but recharge time does not create a battery-cycle bottleneck.",
+            )
+        if recharge_category == "recharge_bottleneck":
+            return (
+                "Not feasible",
+                "Not feasible under current recharge assumptions. The mission exceeds charged inventory and the recharge cycle cannot recover depleted sets before reuse.",
+            )
     if mission_type in PAYLOAD_MISSIONS:
         if conservative_ok:
-            return "Feasible", "Feasible. The selected platform can complete the payload route with the declared inventory; maintain the recorded METOC and battery assumptions for review."
+            inventory_phrase = "one-way vehicle inventory" if one_way_inventory else "battery inventory"
+            return "Feasible", f"Feasible. The selected platform can complete the payload route with the declared {inventory_phrase}; maintain the recorded METOC and energy assumptions for review."
         status = "Marginal" if planning_ok or (margin_p80 is not None and margin_p80 >= 0) else "Not feasible"
+        if one_way_inventory:
+            return status, f"{status}. The selected payload route exceeds the declared one-way inventory margin; add vehicle units or reduce transit burden."
         return status, f"{status}. The selected payload route exceeds the declared planning margin; reduce transit burden, add inventory, or plan recharge/swap support."
     if mission_type in SEARCH_MISSIONS:
         if conservative_ok:
@@ -435,6 +457,8 @@ def _plain_status_text(summary: dict[str, object]) -> tuple[str, str]:
 
 def _isr_status_text(summary: dict[str, object]) -> tuple[str, str]:
     """Return ISR feasibility using endurance/loop coverage rather than mission-total battery sets."""
+    one_way_inventory = summary.get("vehicle_rechargeable") is False
+    recovery_phrase = "recovery/replacement" if one_way_inventory else "recovery/swap"
     completed_total = _as_int(summary.get("isr_completed_loops_total_inventory")) or 0
     completed_single = _as_int(summary.get("isr_completed_loops_single_set") or summary.get("isr_completed_loops")) or 0
     partial_total_km = _as_float(summary.get("isr_partial_loop_distance_km_total_inventory"))
@@ -449,12 +473,12 @@ def _isr_status_text(summary: dict[str, object]) -> tuple[str, str]:
             total_inventory_endurance = _as_float(summary.get("isr_total_inventory_endurance_hr"))
             bluf = (
                 f"Feasible. One installed set supports approximately {fmt1(single_set_endurance)} hr; "
-                f"declared inventory supports approximately {fmt1(total_inventory_endurance)} hr if sequential recovery/swap is available."
+                f"declared inventory supports approximately {fmt1(total_inventory_endurance)} hr if sequential {recovery_phrase} is available."
             )
         else:
             bluf = (
                 f"Feasible. The selected platform supports the ISR patrol for approximately {fmt1(single_set_endurance)} hr "
-                f"per installed set, completing {fmt_int(completed_single)} full loop(s) before recovery/swap."
+                f"per installed set, completing {fmt_int(completed_single)} full loop(s) before {recovery_phrase}."
             )
         return (
             "Feasible",
@@ -465,7 +489,7 @@ def _isr_status_text(summary: dict[str, object]) -> tuple[str, str]:
             "Marginal",
             (
                 "Marginal. The selected vehicle cannot complete a full patrol loop, "
-                f"but can cover approximately {fmt1(total_distance or partial_km)} km before recovery/swap."
+                f"but can cover approximately {fmt1(total_distance or partial_km)} km before {recovery_phrase}."
             ),
         )
     return (
@@ -493,6 +517,7 @@ def _decision_kpis(summary: dict[str, object], environment: EnvironmentData) -> 
     mission_type = str(summary.get("mission_type") or "")
     del environment
     if mission_type in ISR_MISSIONS:
+        one_way_inventory = summary.get("vehicle_rechargeable") is False
         partial_km = _as_float(summary.get("isr_partial_loop_distance_km_total_inventory"))
         partial_pct = _as_float(summary.get("isr_remaining_partial_loop_pct"))
         partial_text = f"{fmt1(partial_km)} km" if partial_km is not None else f"{fmt1(partial_pct)}%"
@@ -502,7 +527,7 @@ def _decision_kpis(summary: dict[str, object], environment: EnvironmentData) -> 
             _kpi_tile("Partial next loop", partial_text),
             _kpi_tile("Endurance per set", f"{fmt1(summary.get('isr_single_set_endurance_hr') or summary.get('isr_max_time_on_station_hr'))} hr"),
             _kpi_tile("Total patrol distance", f"{fmt1(summary.get('isr_total_patrol_distance_km_total_inventory') or summary.get('isr_total_patrol_distance_km_single_set'))} km"),
-            _kpi_tile("Recovery/swap", f"{fmt1(summary.get('isr_swap_window_hr') or summary.get('isr_single_set_endurance_hr'))} hr"),
+            _kpi_tile("Recovery / replacement" if one_way_inventory else "Recovery/swap", f"{fmt1(summary.get('isr_swap_window_hr') or summary.get('isr_single_set_endurance_hr'))} hr"),
         ]
     usable_per_set = _as_float(summary.get("usable_battery_per_set_kwh"))
     p80 = _as_float(summary.get("p80_energy_kwh"))
@@ -512,11 +537,14 @@ def _decision_kpis(summary: dict[str, object], environment: EnvironmentData) -> 
     sets_p95 = math.ceil(p95 / usable_per_set) if p95 is not None and usable_per_set and usable_per_set > 0 else sets_p80
     margin = (total_available - p80) if total_available is not None and p80 is not None else None
     sets_available = int(summary.get("battery_sets_available") or 0)
+    one_way_inventory = summary.get("vehicle_rechargeable") is False
+    p80_label = "Vehicle units P80" if one_way_inventory else "Battery sets P80"
+    p95_label = "Vehicle units P95" if one_way_inventory else "Battery sets P95"
     return [
         _kpi_tile("Planning energy P80", f"{fmt1(p80)} kWh"),
         _kpi_tile("Conservative energy P95", f"{fmt1(p95)} kWh"),
-        _kpi_tile("Battery sets P80", fmt_int(sets_p80), status="sufficient" if sets_p80 and sets_p80 <= sets_available else "marginal"),
-        _kpi_tile("Battery sets P95", fmt_int(sets_p95), status="sufficient" if sets_p95 and sets_p95 <= sets_available else "marginal"),
+        _kpi_tile(p80_label, fmt_int(sets_p80), status="sufficient" if sets_p80 and sets_p80 <= sets_available else "marginal"),
+        _kpi_tile(p95_label, fmt_int(sets_p95), status="sufficient" if sets_p95 and sets_p95 <= sets_available else "marginal"),
         _kpi_tile("Inventory margin", f"{fmt1(margin)} kWh", status="sufficient" if margin is not None and margin >= 0 else "shortfall"),
         _kpi_tile("Mission duration", f"{fmt1(summary.get('mean_duration_hr'))} hr"),
     ]
@@ -847,6 +875,14 @@ def build_technical_traceability_html(summary: dict[str, object], environment: E
         ("Source note", source_note, ""),
         ("Usable battery basis", usable_basis, ""),
     ]
+    if summary.get("vehicle_rechargeable") is False:
+        rows.append(
+            (
+                "Non-rechargeable inventory basis",
+                "Vehicle catalog marks this platform as non-rechargeable; sustainment output is expressed as vehicle units rather than battery sets.",
+                "",
+            )
+        )
     if environment.salinity_source and environment.salinity_source != "Standard seawater assumption":
         rows.insert(12, ("Salinity provider status", environment.salinity_source, ""))
     table = build_report_table_html(rows, "Technical Traceability / Model Detail")
@@ -937,7 +973,10 @@ def _legacy_energy_planner_summary_html(summary: dict[str, object], area: Missio
     inventory_sufficient_raw = summary.get("battery_inventory_sufficient_no_recharge")
     inventory_sufficient = bool(inventory_sufficient_raw) if inventory_sufficient_raw is not None else None
     recharge_allowed = bool(summary.get("recharge_allowed"))
-    vehicle_rechargeable = bool(summary.get("vehicle_rechargeable", True))
+    vehicle_rechargeable = summary.get("vehicle_rechargeable") is not False
+    recharge_category = str(summary.get("recharge_feasibility_category") or "")
+    recharge_status = str(summary.get("recharge_feasibility_status") or "")
+    recharge_shortfall = _as_float(summary.get("in_mission_recharge_shortfall_kwh")) or 0.0
     conservative_sets_required = math.ceil(p95 / usable_per_set) if p95 is not None and usable_per_set and usable_per_set > 0 else None
     conservative_inventory_sufficient = (
         conservative_sets_required <= sets_available
@@ -946,20 +985,31 @@ def _legacy_energy_planner_summary_html(summary: dict[str, object], area: Missio
     )
 
     bluf: str | None = None
-    if conservative_inventory_sufficient is True:
-        bluf = "Mission is feasible with current battery inventory at the conservative planning level."
+    if vehicle_rechargeable and recharge_category == "charged_inventory":
+        bluf = "Feasible. The selected platform can complete the mission with declared charged battery inventory."
+    elif vehicle_rechargeable and recharge_category == "recharge_supported":
+        bluf = (
+            f"Feasible with continuous recharge/swap support. Initial charged inventory is short by {fmt1(recharge_shortfall)} kWh, "
+            "but recharge time does not create a battery-cycle bottleneck."
+        )
+    elif vehicle_rechargeable and recharge_category == "recharge_bottleneck":
+        bluf = "Not feasible under current recharge assumptions. The mission exceeds charged inventory and the recharge cycle cannot recover depleted sets before reuse."
+    elif conservative_inventory_sufficient is True:
+        inventory_label = "vehicle inventory" if not vehicle_rechargeable else "battery inventory"
+        bluf = f"Mission is feasible with current {inventory_label} at the conservative planning level."
+    elif conservative_inventory_sufficient is False and not vehicle_rechargeable:
+        bluf = "Mission needs additional one-way inventory at the conservative planning level."
     elif conservative_inventory_sufficient is False and recharge_allowed:
         bluf = "Mission needs recharge, swap sequencing, or additional charged inventory at the conservative planning level."
-    elif conservative_inventory_sufficient is False and not vehicle_rechargeable:
-        bluf = "Mission needs additional one-way inventory or replacement energy production at the conservative planning level."
     elif conservative_inventory_sufficient is False:
         bluf = "Mission is not covered by current battery inventory at the conservative planning level unless additional charged batteries are staged."
     elif inventory_sufficient is True:
-        bluf = "Mission is feasible with current battery inventory at the planning level."
+        inventory_label = "vehicle inventory" if not vehicle_rechargeable else "battery inventory"
+        bluf = f"Mission is feasible with current {inventory_label} at the planning level."
+    elif inventory_sufficient is False and not vehicle_rechargeable:
+        bluf = "Mission needs additional one-way inventory at the planning level."
     elif inventory_sufficient is False and recharge_allowed:
         bluf = "Mission needs recharge, swap sequencing, or additional charged inventory at the planning level."
-    elif inventory_sufficient is False and not vehicle_rechargeable:
-        bluf = "Mission needs additional one-way inventory or replacement energy production at the planning level."
     elif inventory_sufficient is False:
         bluf = "Mission is not covered by current battery inventory at the planning level unless additional charged batteries are staged."
     if p95 is not None:
@@ -984,7 +1034,13 @@ def _legacy_energy_planner_summary_html(summary: dict[str, object], area: Missio
     active_inventory_sufficient = conservative_inventory_sufficient if conservative_inventory_sufficient is not None else inventory_sufficient
     if active_sets_required is not None:
         if not vehicle_rechargeable:
-            recharge_swap = "Catalog marks this platform as one-way/non-rechargeable; plan replacement inventory or energy production rather than recharge turnaround."
+            recharge_swap = "Selected platform is modeled as non-rechargeable for sustainment planning; use vehicle units and replacement inventory."
+        elif recharge_category == "charged_inventory":
+            recharge_swap = "Charged inventory is sufficient; no in-mission recharge is required for the conservative case."
+        elif recharge_category == "recharge_supported":
+            recharge_swap = "Initial charged inventory is insufficient, but recharge time is shorter than the battery rotation window; mission is feasible with continuous recharge/swap support."
+        elif recharge_category == "recharge_bottleneck":
+            recharge_swap = "Recharge time exceeds the battery rotation window; add charged sets, reduce mission burden, or increase recharge capacity."
         elif active_sets_required > 1 and active_inventory_sufficient:
             recharge_swap = "Battery swap between staged sets is required; no recharge is required if all required sets are available."
         elif active_sets_required > 1:
@@ -994,7 +1050,8 @@ def _legacy_energy_planner_summary_html(summary: dict[str, object], area: Missio
 
     sections = [
         _summary_bullet("BLUF", bluf),
-        _summary_bullet("Recharge / swap", recharge_swap),
+        _summary_bullet("Recharge feasibility", recharge_status if vehicle_rechargeable else None),
+        _summary_bullet("Inventory planning" if not vehicle_rechargeable else "Recharge / swap", recharge_swap),
         _summary_bullet("Environmental burden", _environmental_burden_text(summary)),
         _summary_bullet("Planning note", _mission_planning_note(summary, area, environment)),
     ]
@@ -1029,6 +1086,8 @@ def results_html(summary: dict[str, object]) -> str:
         detail_rows.append(("Payload route distance", f"{fmt1(summary.get('route_distance_km'))} km"))
         detail_rows.append(("Payload route heading", f"{fmt1(summary.get('route_heading_deg'))} deg"))
     details = "".join(f"<div><strong>{key}:</strong> {value}</div>" for key, value in detail_rows)
+    one_way_inventory = summary.get("vehicle_rechargeable") is False
+    inventory_required_label = "Vehicle units required at planning level" if one_way_inventory else "Battery sets required at planning level"
     return f"""
     <div class='uuv-card full-width-card metoc-assessment metoc-panel'>
       <h2>Run Summary</h2>
@@ -1036,7 +1095,7 @@ def results_html(summary: dict[str, object]) -> str:
       <p>
         Planning-level mission energy: <strong>{fmt1(summary.get('p80_energy_kwh'))} kWh (P80)</strong> |
         Duration: <strong>{fmt1(summary.get('mean_duration_hr'))} hr</strong> |
-        Battery sets required at planning level: <strong>{fmt_int(summary.get("battery_sets_required_p80"))} (P80)</strong> |
+        {inventory_required_label}: <strong>{fmt_int(summary.get("battery_sets_required_p80"))} (P80)</strong> |
         Inventory sufficient: <strong>{yesno(summary.get("battery_inventory_sufficient_no_recharge"))}</strong>
       </p>
       <div>{details}</div>
@@ -1140,30 +1199,51 @@ def build_battery_sustainment_rows(summary: dict[str, object]) -> list[tuple[str
     shortfall_kwh = max(p80 - total_available, 0.0)
     conservative_shortfall_kwh = max(p95 - total_available, 0.0)
     conservative_sets_required = max(1, math.ceil(p95 / max(usable_per_set, 0.001)))
-    if mission_type in ISR_MISSIONS:
-        conservative_sets_required = max(1, int(summary.get("battery_sets_required_p80") or 1))
-        shortfall_kwh = 0.0
-        conservative_shortfall_kwh = 0.0
     conservative_inventory_sufficient = conservative_shortfall_kwh <= 0.0
+    planning_inventory_sufficient = shortfall_kwh <= 0.0
     recharge_required = conservative_shortfall_kwh > 0.0
-    return [
-        ("Usable battery per set", usable_per_set, "kWh"),
+    one_way_inventory = summary.get("vehicle_rechargeable") is False
+    inventory_unit = "units" if one_way_inventory else "sets"
+    rows = [
+        ("Usable energy per vehicle unit" if one_way_inventory else "Usable battery per set", usable_per_set, "kWh"),
         ("Battery condition assumption", summary.get("battery_condition_assumption"), ""),
         ("Usable battery fraction expected", _float_or_blank(summary.get("battery_usable_fraction_p50")), ""),
         ("Usable battery fraction range", _usable_fraction_range(summary), ""),
         ("Operator reserve fraction", _float_or_blank(summary.get("operator_reserve_fraction")), ""),
         ("Temperature derating", _nonzero_float(summary.get("temperature_derating_pct")), "%"),
-        ("Battery sets available", summary.get("battery_sets_available"), "sets"),
+        ("Vehicle units available" if one_way_inventory else "Battery sets available", summary.get("battery_sets_available"), inventory_unit),
         ("Total available energy", total_available, "kWh"),
-        ("Reserve energy per set", reserve_energy if reserve_energy > 0 else "", "kWh"),
-        ("Battery sets required at conservative level (P95)", conservative_sets_required, "sets"),
-        ("Battery sets required at planning level (P80)", summary.get("battery_sets_required_p80"), "sets"),
+        ("Nameplate-to-usable allowance per unit" if one_way_inventory else "Nameplate-to-usable allowance per set", reserve_energy if reserve_energy > 0 else "", "kWh"),
+        ("One-way vehicle inventory required at conservative level (P95)" if one_way_inventory else "Battery sets required at conservative level (P95)", conservative_sets_required, inventory_unit),
+        ("One-way vehicle inventory required at planning level (P80)" if one_way_inventory else "Battery sets required at planning level (P80)", summary.get("battery_sets_required_p80"), inventory_unit),
         ("Conservative shortfall (P95)", conservative_shortfall_kwh, "kWh"),
         ("Planning-level shortfall (P80)", shortfall_kwh, "kWh"),
-        ("Recharge/swap required at conservative level", _yes_no(recharge_required), ""),
-        ("Conservative battery inventory sufficient (P95)", _yes_no(conservative_inventory_sufficient), ""),
-        ("Planning-level battery inventory sufficient (P80)", _yes_no(summary.get("battery_inventory_sufficient_no_recharge")), ""),
+        ("Replacement inventory required at conservative level" if one_way_inventory else "Recharge/swap required at conservative level", _yes_no(recharge_required), ""),
+        ("Conservative vehicle inventory sufficient (P95)" if one_way_inventory else "Conservative battery inventory sufficient (P95)", _yes_no(conservative_inventory_sufficient), ""),
+        ("Planning-level vehicle inventory sufficient (P80)" if one_way_inventory else "Planning-level battery inventory sufficient (P80)", _yes_no(planning_inventory_sufficient), ""),
+        ("Recharge feasibility status", summary.get("recharge_feasibility_status"), ""),
     ]
+    if one_way_inventory:
+        rows.extend(
+            [
+                ("Runtime per vehicle unit", _float_or_blank(summary.get("runtime_per_battery_set_hr")), "hr"),
+                ("Replacement inventory required", _yes_no(recharge_required), ""),
+                ("Replacement inventory shortfall", conservative_shortfall_kwh, "kWh"),
+                ("Replacement inventory energy equivalent", conservative_shortfall_kwh, "kWh"),
+            ]
+        )
+        return rows
+    rows.extend(
+        [
+            ("Runtime per battery set", _float_or_blank(summary.get("runtime_per_battery_set_hr")), "hr"),
+        ("Recharge time per set", _float_or_blank(summary.get("recharge_time_per_set_hr")), "hr"),
+        ("Available recharge window before set reuse", _float_or_blank(summary.get("available_recharge_window_hr")), "hr"),
+        ("Recharge bottleneck", _yes_no(summary.get("recharge_bottleneck")), ""),
+        ("In-mission recharge shortfall", _float_or_blank(summary.get("in_mission_recharge_shortfall_kwh")), "kWh"),
+        ("Recharge energy required during mission", _float_or_blank(summary.get("recharge_energy_required_during_mission_kwh")), "kWh"),
+        ]
+    )
+    return rows
 
 
 def _nonzero_float(value: object) -> float | str:
@@ -1188,18 +1268,19 @@ def build_sustainment_projection_rows(summary: dict[str, object]) -> list[tuple[
     """Build simplified sustainment energy-flow projection rows."""
     projection_enabled = bool(summary.get("sustainment_projection_enabled"))
     projection_mode = "Optional mission projection lens" if projection_enabled else "Single mission default"
+    one_way_inventory = summary.get("vehicle_rechargeable") is False
     return [
         ("Projection mode", projection_mode, ""),
         ("Planning horizon", _float_or_blank(summary.get("sustainment_planning_weeks")), "weeks"),
         ("Operations per week", _float_or_blank(summary.get("sustainment_missions_per_week")), "missions"),
         ("Total projected missions", _float_or_blank(summary.get("sustainment_total_missions")), "missions"),
         ("Conservative energy per mission", _float_or_blank(summary.get("sustainment_conservative_energy_per_mission_kwh")), "kWh"),
-        ("Conservative total energy demand", _float_or_blank(summary.get("sustainment_total_conservative_energy_kwh")), "kWh"),
+        ("Total mission energy throughput", _float_or_blank(summary.get("sustainment_total_conservative_energy_kwh")), "kWh"),
         ("Usable inventory energy per cycle", _float_or_blank(summary.get("sustainment_usable_inventory_energy_per_cycle_kwh")), "kWh"),
-        ("Inventory cycles required", _float_or_blank(summary.get("sustainment_inventory_cycles_required")), "cycles"),
-        ("Recharge energy required", _float_or_blank(summary.get("sustainment_recharge_energy_required_kwh")), "kWh"),
-        ("Generator efficiency", _float_or_blank(summary.get("sustainment_generator_efficiency")), ""),
-        ("Generator input energy", _float_or_blank(summary.get("sustainment_generator_input_energy_kwh")), "kWh"),
+        ("Replacement inventory units required" if one_way_inventory else "Inventory cycles required", _float_or_blank(summary.get("sustainment_inventory_cycles_required")), "units" if one_way_inventory else "cycles"),
+        ("Replacement inventory energy equivalent" if one_way_inventory else "In-mission recharge shortfall", _float_or_blank(summary.get("in_mission_recharge_shortfall_kwh")), "kWh"),
+        ("Generator efficiency", _fmt_efficiency(summary.get("sustainment_generator_efficiency")), ""),
+        ("Generator input energy equivalent" if one_way_inventory else "Generator input energy to reset consumed energy", _float_or_blank(summary.get("sustainment_generator_input_energy_kwh")), "kWh"),
         ("Generator planning factor", _float_or_blank(summary.get("sustainment_generator_kwh_per_gallon")), "kWh/gal"),
     ]
 
@@ -1268,7 +1349,7 @@ def build_mission_geometry_summary_rows(
             ("Partial next-loop distance using total inventory", _float_or_blank(summary.get("isr_partial_loop_distance_km_total_inventory")), "km"),
             ("Total patrol distance per installed set", _float_or_blank(summary.get("isr_total_patrol_distance_km_single_set")), "km"),
             ("Total patrol distance using total inventory", _float_or_blank(summary.get("isr_total_patrol_distance_km_total_inventory")), "km"),
-            ("Battery swap/recovery window", _float_or_blank(summary.get("isr_swap_window_hr")), "hr"),
+            ("Endurance / recovery window" if summary.get("vehicle_rechargeable") is False else "Battery swap/recovery window", _float_or_blank(summary.get("isr_swap_window_hr")), "hr"),
             ("METOC lookup point", _metoc_lookup_point(environment, area, lookup_label), ""),
         ]
         if area.area_km2 is not None:
@@ -1334,6 +1415,14 @@ def _fmt_gallons(value: object) -> str:
     return fmt1(numeric)
 
 
+def _fmt_efficiency(value: object) -> str:
+    """Format generator efficiency without rounding 0.84 down to 0.8."""
+    numeric = _as_float(value)
+    if numeric is None:
+        return ""
+    return f"{numeric * 100.0:.0f}%"
+
+
 def build_energy_equivalence_rows(
     planning_energy_kwh: float,
     planning_basis: str,
@@ -1362,7 +1451,7 @@ def build_energy_equivalence_rows(
         ["Metric tons oil equivalent", f"{tons_oil:.6f} metric tons oil equivalent"],
     ]
     if fuel_gallons_equivalent is not None:
-        rows.append(["Fuel-equivalent estimate", f"{_fmt_gallons(fuel_gallons_equivalent)} gal JP-8/diesel"])
+        rows.append(["Fuel-equivalent estimate based on generator input energy", f"{_fmt_gallons(fuel_gallons_equivalent)} gal JP-8/diesel"])
     return rows
 
 
@@ -1613,7 +1702,13 @@ def build_energy_time_chart(
     return fig
 
 
-def build_distribution_chart(energy_arr: np.ndarray, p80: float, usable_total_kwh: float, mission_type: str = "") -> Any:
+def build_distribution_chart(
+    energy_arr: np.ndarray,
+    p80: float,
+    usable_total_kwh: float,
+    mission_type: str = "",
+    inventory_label: str = "Battery inventory",
+) -> Any:
     """Render Monte Carlo energy distribution."""
     fig, ax = plt.subplots(figsize=(9.5, 4.8), dpi=120)
     p05 = float(np.percentile(energy_arr, 5))
@@ -1630,9 +1725,9 @@ def build_distribution_chart(energy_arr: np.ndarray, p80: float, usable_total_kw
     ax.axvline(p80, linestyle="--", linewidth=2, label=f"Planning-level energy (P80): {fmt1(p80)} kWh")
     ax.axvline(p95, linestyle=":", linewidth=2, label=f"Conservative energy (P95): {fmt1(p95)} kWh")
     if xmin <= usable_total_kwh <= xmax:
-        ax.axvline(usable_total_kwh, linestyle="-.", linewidth=2, label=f"Battery inventory: {fmt1(usable_total_kwh)} kWh")
+        ax.axvline(usable_total_kwh, linestyle="-.", linewidth=2, label=f"{inventory_label}: {fmt1(usable_total_kwh)} kWh")
     else:
-        ax.text(0.98, 0.95, f"Battery inventory without recharge: {fmt1(usable_total_kwh)} kWh", transform=ax.transAxes, ha="right", va="top", fontsize=9, bbox=dict(boxstyle="round,pad=0.35", facecolor="#eef2f7", edgecolor="#94a3b8", alpha=0.95))
+        ax.text(0.98, 0.95, f"{inventory_label}: {fmt1(usable_total_kwh)} kWh", transform=ax.transAxes, ha="right", va="top", fontsize=9, bbox=dict(boxstyle="round,pad=0.35", facecolor="#eef2f7", edgecolor="#94a3b8", alpha=0.95))
     ax.set_xlim(xmin, xmax)
     ax.set_xlabel("Mission energy required, kWh")
     ax.set_ylabel("Monte Carlo count")

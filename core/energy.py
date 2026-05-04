@@ -186,6 +186,68 @@ def is_vehicle_rechargeable(vehicle: VehicleState) -> bool:
     return vehicle.recharge_hr > 0
 
 
+def recharge_feasibility_lens(
+    p95_energy_kwh: float,
+    mission_duration_hr: float,
+    usable_battery_per_set_kwh: float,
+    battery_sets_available: int,
+    recharge_hr: float,
+    rechargeable: bool,
+    recoverable: bool,
+    recharge_allowed: bool,
+) -> dict[str, object]:
+    """Return recharge/swap feasibility interpretation from already-computed mission values."""
+    p95 = max(float(p95_energy_kwh), 0.0)
+    duration = max(float(mission_duration_hr), 0.0)
+    usable_per_set = max(float(usable_battery_per_set_kwh), 0.001)
+    sets_available = max(int(battery_sets_available), 1)
+    recharge_time = max(float(recharge_hr), 0.0)
+    total_inventory = usable_per_set * sets_available
+    shortfall = max(p95 - total_inventory, 0.0)
+    energy_rate = p95 / duration if duration > 0 and p95 > 0 else 0.0
+    runtime_per_set = usable_per_set / energy_rate if energy_rate > 0 else 0.0
+    recharge_window = runtime_per_set * max(0, sets_available - 1)
+    applies = bool(rechargeable and recoverable and recharge_allowed)
+    charged_inventory_sufficient = p95 <= total_inventory
+    recharge_bottleneck = bool(applies and shortfall > 0 and recharge_time > recharge_window)
+    recharge_supported = bool(
+        shortfall > 0
+        and applies
+        and sets_available >= 2
+        and recharge_time <= recharge_window
+    )
+    vehicle_can_recharge = bool(rechargeable and recoverable)
+    if not vehicle_can_recharge:
+        status = "Not applicable for one-way/non-rechargeable vehicle"
+        category = "not_applicable"
+    elif not recharge_allowed:
+        status = "Recharge not enabled"
+        category = "recharge_disabled"
+    elif charged_inventory_sufficient:
+        status = "Charged inventory sufficient"
+        category = "charged_inventory"
+    elif recharge_supported:
+        status = "Feasible with continuous recharge/swap support"
+        category = "recharge_supported"
+    elif recharge_bottleneck:
+        status = "Recharge bottleneck"
+        category = "recharge_bottleneck"
+    else:
+        status = "Not feasible under current recharge assumptions"
+        category = "not_feasible"
+    return {
+        "recharge_feasibility_status": status,
+        "recharge_feasibility_category": category,
+        "recharge_energy_rate_kwh_per_hr": energy_rate,
+        "runtime_per_battery_set_hr": runtime_per_set,
+        "recharge_time_per_set_hr": recharge_time,
+        "available_recharge_window_hr": recharge_window,
+        "recharge_bottleneck": recharge_bottleneck,
+        "in_mission_recharge_shortfall_kwh": shortfall,
+        "recharge_energy_required_during_mission_kwh": shortfall,
+    }
+
+
 def launch_recovery_energy_kwh(vehicle: VehicleState, enabled: bool = True) -> tuple[float, float, float]:
     """Return launch/recovery energy, duration, and power for recoverable missions."""
     if not enabled or not is_vehicle_recoverable(vehicle):
@@ -446,9 +508,9 @@ def run_energy_simulation(
     available_inventory_samples = sampled_usable_battery_per_set * max(1, battery_sets_available)
     inventory_probability = float(np.mean(energy_arr <= available_inventory_samples) * 100.0)
     battery_sets_required_p80 = max(1, math.ceil(p80 / max(usable_battery_per_set, 0.001)))
-    if mission_type in ISR_MISSIONS:
-        battery_sets_required_p80 = 1
+    battery_sets_required_p95 = max(1, math.ceil(p95 / max(usable_battery_per_set, 0.001)))
     battery_shortfall = max(0, battery_sets_required_p80 - max(1, battery_sets_available))
+    battery_shortfall_p95 = max(0, battery_sets_required_p95 - max(1, battery_sets_available))
     effective_recharge_allowed = bool(recharge_allowed) and is_vehicle_rechargeable(vehicle)
     recharge_sequences_required = battery_shortfall if effective_recharge_allowed else 0
     recharge_downtime_hr = recharge_sequences_required * vehicle.recharge_hr
@@ -572,6 +634,16 @@ def run_energy_simulation(
         battery_sets_available=max(1, battery_sets_available),
         generator_efficiency=sustainment_generator_efficiency,
     )
+    recharge_feasibility = recharge_feasibility_lens(
+        p95_energy_kwh=p95,
+        mission_duration_hr=mean_duration,
+        usable_battery_per_set_kwh=usable_battery_per_set,
+        battery_sets_available=max(1, battery_sets_available),
+        recharge_hr=vehicle.recharge_hr,
+        rechargeable=is_vehicle_rechargeable(vehicle),
+        recoverable=is_vehicle_recoverable(vehicle),
+        recharge_allowed=bool(recharge_allowed),
+    )
 
     summary = {
         "platform": vehicle.name,
@@ -590,12 +662,15 @@ def run_energy_simulation(
         "inventory_sufficiency_probability_pct": inventory_probability,
         "battery_inventory_sufficient_no_recharge": battery_shortfall == 0,
         "battery_sets_required_p80": battery_sets_required_p80,
+        "battery_sets_required_p95": battery_sets_required_p95,
         "battery_sets_available": max(1, battery_sets_available),
         "battery_shortfall_p80": battery_shortfall,
+        "battery_shortfall_p95": battery_shortfall_p95,
         "recharge_sequences_required": recharge_sequences_required,
         "recharge_allowed": effective_recharge_allowed,
         "vehicle_recoverable": is_vehicle_recoverable(vehicle),
         "vehicle_rechargeable": is_vehicle_rechargeable(vehicle),
+        "vehicle_recharge_hr": vehicle.recharge_hr,
         "payload_recovery_mode": recovery_mode if mission_type in PAYLOAD_MISSIONS else "not_applicable",
         "payload_one_way_catalog_note": (
             "Vehicle catalog marks this platform as one-way/non-rechargeable; payload planning uses one-way route energy."
@@ -628,6 +703,7 @@ def run_energy_simulation(
         "usable_basis": vehicle.usable_basis,
         "track_spacing_m": track_spacing_m,
         "speed_kts": speed_kts,
+        "search_area_km2": area.area_km2 if mission_type in SEARCH_MISSIONS else None,
         "search_width_km": area.width_km,
         "search_height_km": area.height_km,
         "route_distance_km": area.route_distance_km,
@@ -646,6 +722,7 @@ def run_energy_simulation(
         "reserve_margin_per_set_kwh": max(vehicle.battery_kwh - usable_battery_per_set, 0.0),
         "battery_remaining_pct_p80": max(0.0, min(100.0, 100.0 * (1.0 - p80 / max(total_available_kwh, 0.001)))),
         **{f"sustainment_{key}": value for key, value in sustainment_projection.items()},
+        **recharge_feasibility,
         **search_summary,
         **isr_summary,
     }
@@ -654,6 +731,8 @@ def run_energy_simulation(
         summary["total_inventory_endurance_hr"] = summary.get("isr_total_inventory_endurance_hr")
         summary["single_set_endurance_hr"] = summary.get("isr_single_set_endurance_hr")
 
+    one_way_inventory = not is_vehicle_rechargeable(vehicle)
+    inventory_unit_plural = "units" if one_way_inventory else "sets"
     rows = [
         ("Platform", vehicle.name, ""),
         ("Mission type", mission_type, ""),
@@ -664,7 +743,7 @@ def run_energy_simulation(
         ("P95 energy required", p95, "kWh"),
         ("Mean mission duration", mean_duration, "hr"),
         ("Battery nameplate capacity", vehicle.battery_kwh, "kWh"),
-        ("Usable planning energy per set", usable_battery_per_set, "kWh"),
+        ("Usable planning energy per vehicle unit" if one_way_inventory else "Usable planning energy per set", usable_battery_per_set, "kWh"),
         ("Battery condition assumption", str(battery_condition).lower(), ""),
         ("Temperature capacity factor", mean_temperature_capacity_factor, ""),
         ("Operator reserve fraction", reserve_fraction, ""),
@@ -673,14 +752,14 @@ def run_energy_simulation(
         ("Payload carriage penalty", payload_penalty_pct if mission_type in PAYLOAD_MISSIONS else 0.0, "%"),
         ("Payload propulsion penalty multiplier", payload_propulsion_multiplier if mission_type in PAYLOAD_MISSIONS else 1.0, ""),
         ("Launch/recovery overhead", launch_recovery_energy if mission_type in PAYLOAD_MISSIONS else 0.0, "kWh"),
-        ("Battery sets on hand", battery_sets_available, "sets"),
-        ("Battery inventory without recharge", "Sufficient" if battery_shortfall == 0 else "Not sufficient", ""),
-        ("Battery inventory sufficiency across Monte Carlo runs", inventory_probability, "%"),
-        ("Battery sets required at P80", battery_sets_required_p80, "sets"),
-        ("Battery shortfall at P80", battery_shortfall, "sets"),
-        ("Recharge / swap sequences required", recharge_sequences_required, "sequences"),
-        ("Recharge downtime", recharge_downtime_hr, "hr"),
-        ("Elapsed time incl. recharge", mean_duration + recharge_downtime_hr, "hr"),
+        ("Vehicle units on hand" if one_way_inventory else "Battery sets on hand", battery_sets_available, inventory_unit_plural),
+        ("Vehicle inventory sufficiency" if one_way_inventory else "Battery inventory without recharge", "Sufficient" if battery_shortfall == 0 else "Not sufficient", ""),
+        ("Vehicle inventory sufficiency across Monte Carlo runs" if one_way_inventory else "Battery inventory sufficiency across Monte Carlo runs", inventory_probability, "%"),
+        ("Vehicle units required at P80" if one_way_inventory else "Battery sets required at P80", battery_sets_required_p80, inventory_unit_plural),
+        ("Vehicle inventory shortfall at P80" if one_way_inventory else "Battery shortfall at P80", battery_shortfall, inventory_unit_plural),
+        ("Replacement inventory units required" if one_way_inventory else "Recharge / swap sequences required", battery_shortfall if one_way_inventory else recharge_sequences_required, inventory_unit_plural if one_way_inventory else "sequences"),
+        ("Replacement inventory planning delay" if one_way_inventory else "Recharge downtime", 0.0 if one_way_inventory else recharge_downtime_hr, "hr"),
+        ("Elapsed mission time" if one_way_inventory else "Elapsed time incl. recharge", mean_duration if one_way_inventory else mean_duration + recharge_downtime_hr, "hr"),
     ]
     if mission_type in ISR_MISSIONS:
         rows.extend(
