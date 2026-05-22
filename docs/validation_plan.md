@@ -48,3 +48,4 @@ Each physical test should preserve:
 * No-internet and API-failure behavior is tested.
 * API-failure records preserve query parameters.
 * Actual-versus-predicted test log format is approved.
+* Temperature validation figure overlays the old model curve, the active table-driven curve, and Bressan-style anchor points at about 22 deg C = 0 percent, 2 deg C = 5 percent, -10 deg C = 15 percent, -20 deg C = 35 percent, and 52 deg C = 5 percent.

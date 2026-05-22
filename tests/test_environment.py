@@ -21,8 +21,8 @@ class EnvironmentUpliftTests(unittest.TestCase):
 
     def test_environmental_uplift_combines_penalties(self) -> None:
         """Demand-side uplift excludes temperature, which is now capacity derating."""
-        self.assertAlmostEqual(environmental_uplift_factor(10.0, current_penalty=0.02), 1.02)
-        self.assertAlmostEqual(environmental_uplift_factor(10.0, current_penalty=0.02, salinity_penalty=0.015), 1.035)
+        self.assertAlmostEqual(environmental_uplift_factor(2.0, current_penalty=0.02), 1.02)
+        self.assertAlmostEqual(environmental_uplift_factor(2.0, current_penalty=0.02, salinity_penalty=0.015), 1.035)
 
     def test_salinity_penalty_is_bounded_and_missing_safe(self) -> None:
         """Salinity uplift should be zero when missing and bounded for extreme values."""

@@ -136,6 +136,8 @@ The active public baseline generally centers on an 88 percent usable fraction. T
 
 Temperature derating uses the named `lithium_temperature_capacity_derating_v1` curve. Temperature reduces available battery capacity and is not also applied as a mission energy demand uplift. Current, speed-power, and salinity affect energy demand.
 
+The original temperature derating rule captured the correct degradation direction but capped severe cold at 25 percent. After comparison with Bressan-style LiFePO4 capacity-loss anchors, the model was updated to a table-driven derating curve that preserves the no-penalty operating band while aligning the cold-side planning penalty with experimental capacity-loss evidence.
+
 Battery inventory is represented by the number of battery sets available. For ISR, reporting separates one installed set from total available inventory. For Payload and Search/MCM, reports focus on mission-total energy, battery sets required, and shortfall.
 
 ## Monte Carlo Uncertainty Interpretation
