@@ -26,9 +26,9 @@ MODEL_ASSUMPTIONS: dict[str, ModelAssumption] = {
     ),
     "default_hotel_load_fraction": ModelAssumption(
         key="default_hotel_load_fraction",
-        value=0.35,
+        value=0.40,
         rationale="Separates fixed hotel/sensor/control load from speed-dependent propulsion load.",
-        source="Engineering planning assumption for v3.5 beta speed-power correction.",
+        source="Engineering planning assumption for v3.5 beta speed-aware power correction.",
         confidence="low-medium",
     ),
     "default_usable_battery_fraction": ModelAssumption(
@@ -68,15 +68,15 @@ MODEL_ASSUMPTIONS: dict[str, ModelAssumption] = {
     ),
     "temperature_derating_curve_v1": ModelAssumption(
         key="temperature_derating_curve_v1",
-        value=">=10C:1.00; 0-10C:0.96; -10-0C:0.88; -20--10C:0.82; <-20C:0.75",
-        rationale="Simple planning-level lithium-ion capacity derating curve for cold-water operations.",
+        value="-20C:0.65; -10C:0.85; 2C:0.95; 15-32C:1.00; 52C:0.95; 62C:0.85",
+        rationale="Table-driven planning-level lithium capacity derating curve aligned to Bressan-style capacity-loss anchors.",
         source="core.battery.lithium_temperature_capacity_factor.",
         confidence="medium",
     ),
     "temperature_no_effect_band": ModelAssumption(
         key="temperature_no_effect_band",
-        value="temp_c >= 10",
-        rationale="Normal and warm-water cases do not receive additional demand uplift in the current planning model.",
+        value="15C <= temp_c <= 32C",
+        rationale="Normal operating band does not receive temperature capacity derating or additional demand uplift.",
         source="core.battery.lithium_temperature_capacity_factor.",
         confidence="medium",
     ),
@@ -166,9 +166,9 @@ MODEL_ASSUMPTIONS: dict[str, ModelAssumption] = {
     ),
     "vehicle_specific_hotel_fraction_policy": ModelAssumption(
         key="vehicle_specific_hotel_fraction_policy",
-        value="catalog hotel_fraction overrides default; clamped to 0.05-0.85",
+        value="catalog hotel_fraction or hotel_power_fraction overrides default; clamped to 0.20-0.80",
         rationale="Allows heavier sensor/hotel-load vehicles to override the global split without requiring all catalog entries to carry the field.",
-        source="core.energy.estimate_power_at_speed_kw.",
+        source="core.power.power_model_breakdown.",
         confidence="low",
     ),
     "oil_equivalent_conversion_caveat": ModelAssumption(

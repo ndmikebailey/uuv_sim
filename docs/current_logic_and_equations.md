@@ -34,7 +34,7 @@ Implemented in `models/vehicle_model.py` and `core/energy.py`.
 
 ## Speed-Power Model
 
-The project notes propose a fixed hotel load and cubic propulsion law. The current implementation follows that structure with a default hotel fraction of `0.35`.
+The project notes propose a fixed hotel load and cubic propulsion law. The current implementation follows that structure with a default hotel power fraction of `0.40`.
 
 ```text
 hotel_kw = average_power_kw * hotel_fraction
@@ -46,14 +46,17 @@ dynamic_power_kw = hotel_kw + propulsion_kw_nominal * speed_ratio^3
 Current defaults and overrides:
 
 ```text
-hotel_fraction = 0.35
+hotel_power_fraction = 0.40
 speed_exponent = 3.0
-catalog hotel_fraction override: optional, clamped to 0.05-0.85
+min_efficient_speed = 0.65 * nominal_speed
+low_speed_penalty_fraction = 0.15
+low_speed_penalty_cap_fraction = 0.10
+catalog hotel_fraction / hotel_power_fraction override: optional, clamped to 0.20-0.80
 ```
 
-The project notes mention a defensible 20/80 hotel/propulsion split. The active code uses 35/65 when the catalog does not provide a vehicle-specific value. Vehicles with heavier sensor/hotel load may provide `hotel_fraction` in `data/vehicle_catalog.json`.
+The project notes mention a defensible 20/80 hotel/propulsion split. The active code uses 40/60 when the catalog does not provide a vehicle-specific value. Vehicles with heavier sensor/hotel load may provide `hotel_fraction` or `hotel_power_fraction` in `data/vehicle_catalog.json`.
 
-Implemented in `core/energy.py::estimate_power_at_speed_kw`.
+Implemented in `core/power.py` and exposed through `core/energy.py::estimate_power_at_speed_kw`.
 
 ## Hydrodynamic Cross-Check Equations
 
@@ -73,11 +76,13 @@ Implementation boundary: current app relies on manufacturer or catalog baseline 
 Temperature is now modeled as usable battery capacity derating:
 
 ```text
-temp_c >= 10       -> 1.00
-0 <= temp_c < 10   -> 0.96
--10 <= temp_c < 0  -> 0.88
--20 <= temp_c < -10 -> 0.82
-temp_c < -20       -> 0.75
+-20 deg C -> 0.65
+-10 deg C -> 0.85
+2 deg C   -> 0.95
+15 deg C  -> 1.00
+32 deg C  -> 1.00
+52 deg C  -> 0.95
+62 deg C  -> 0.85
 ```
 
 Implemented in `core/battery.py::lithium_temperature_capacity_factor`.
@@ -180,7 +185,7 @@ penalty_pct = (payload_weight_kg / vehicle_energy_kwh) * 0.30
 weight_penalty_multiplier = 1.0 + min(5.0, max(0.0, penalty_pct)) / 100.0
 
 outbound_power_kw = estimate_power_at_speed_kw(..., propulsion_multiplier=weight_penalty_multiplier)
-return_power_kw = estimate_power_at_speed_kw(..., propulsion_multiplier=1.0)
+return_power_kw = speed_adjusted_power_kw(...)
 launch_recovery_energy_kwh = launch_recovery_overhead_hr * launch_recovery_power_kw
 energy_single_kwh = (
     outbound_power_kw * (outbound_time_hr + transit_time_hr)

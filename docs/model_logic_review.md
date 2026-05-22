@@ -85,14 +85,14 @@ The model estimates power at requested speed with:
 - speed-dependent propulsion load
 - cubic propulsion scaling by default
 
-The helper is `estimate_power_at_speed_kw()` in `core/energy.py`. It prevents the model from making higher speeds appear too efficient simply because duration decreases while average power remains fixed.
+The calibrated helper is `power_model_breakdown()` in `core/power.py`, with `estimate_power_at_speed_kw()` in `core/energy.py` retained as the v3.5 compatibility wrapper for payload propulsion multipliers. It prevents the model from making higher speeds appear too efficient simply because duration decreases while average power remains fixed.
 
 The assumptions are traceable in `core/assumptions.py`:
 
 - `default_hotel_load_fraction`
 - `propulsion_speed_exponent`
 
-Current implementation detail: the default hotel fraction is `0.35`, with `0.65` of baseline power treated as propulsion at nominal speed. Vehicle catalog entries may optionally provide `hotel_fraction`; when present, the catalog value overrides the default and is clamped to 0.05-0.85. The project notes include a 20/80 hotel/propulsion option, but that option has not replaced the default for entries without a catalog override.
+Current implementation detail: the default hotel power fraction is `0.40`, with `0.60` of baseline power treated as propulsion at nominal speed. Vehicle catalog entries may optionally provide `hotel_fraction` or `hotel_power_fraction`; when present, the catalog value overrides the default and is clamped to 0.20-0.80. Low-speed behavior is bounded by `min_efficient_speed = 0.65 * nominal_speed`, `low_speed_penalty_fraction = 0.15`, and `low_speed_penalty_cap_fraction = 0.10`.
 
 The project-note hydrodynamic cylinder equations are methodology cross-check equations, not active simulation equations. The implementation remains a weighted operational planning model.
 

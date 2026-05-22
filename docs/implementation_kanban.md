@@ -7,7 +7,7 @@ Source basis: local project files and `UUV Project file Notes.md`. This board is
 | Item | Implementation state | Local references |
 | --- | --- | --- |
 | Use kWh as the core energy unit | Core loops use kWh/kW for battery and mission-energy planning. Joule, MJ, and GJ equivalents are derived only for reporting. | `core/energy.py::energy_equivalent_rows` |
-| Split baseline power into hotel and propulsion components | `estimate_power_at_speed_kw()` keeps a fixed hotel load and applies cubic speed scaling to propulsion load. Catalog `hotel_fraction` overrides are supported and clamped; missing values use the global default of `0.35`. | `core/energy.py::estimate_power_at_speed_kw`, `models/vehicle_model.py`, `core/assumptions.py` |
+| Split baseline power into hotel and propulsion components | `core.power` keeps a fixed hotel load and applies cubic speed scaling to propulsion load. Catalog `hotel_fraction` or `hotel_power_fraction` overrides are supported and clamped; missing values use the global default of `0.40`. Low-speed behavior is bounded so slow missions are primarily penalized through longer duration. | `core/power.py`, `core/energy.py::estimate_power_at_speed_kw`, `models/vehicle_model.py`, `core/assumptions.py` |
 | Battery usable fraction and reserve margin | Vehicle catalog carries a legacy `usable_fraction`, while the current Monte Carlo samples usable battery fraction by condition. Operator reserve margin remains a separate factor. | `core/battery.py`, `models/vehicle_model.py`, `data/vehicle_catalog.json` |
 | Mission energy percentiles | Monte Carlo runs produce P50, P80, P95, mean energy, and mean duration. | `core/energy.py::run_energy_simulation` |
 | Battery shortfall and recharge downtime | Model compares P80 demand to battery inventory, computes battery shortfall, recharge/swap sequences, and downtime when recharge is enabled. | `core/energy.py::run_energy_simulation` |
@@ -182,7 +182,7 @@ Implementation tasks:
 
 - Add UI controls for operations per week, planning horizon, and generator efficiency.
 - Surface `compute_sustainment_projection()` output in the Results tab.
-- Parameterize hotel fraction by vehicle or configuration while preserving `0.35` default. Complete.
+- Parameterize hotel fraction by vehicle or configuration while preserving the `0.40` planning default. Complete.
 - Add one-way/non-rechargeable report wording for catalog entries with `recharge_hr = 0.0`. Complete.
 - Confirm v3.5 beta release labels during manual UI review.
 

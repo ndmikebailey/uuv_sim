@@ -14,9 +14,9 @@ Vehicle assumptions are loaded from `data/vehicle_catalog.json`.
 * Average platform power is estimated as nameplate battery energy divided by estimated endurance.
 * Battery usable planning energy is `battery_kwh * usable_fraction`.
 * Core energy calculations use kWh and kW. Joules, MJ, and GJ are derived for reporting only.
-* Requested-speed power is split into fixed hotel load and speed-dependent propulsion load. Current implementation uses `hotel_fraction = 0.35` and `speed_exponent = 3.0`.
+* Requested-speed power is split into fixed hotel load and speed-dependent propulsion load. Current implementation uses `hotel_power_fraction = 0.40`, `speed_exponent = 3.0`, `min_efficient_speed = 0.65 * nominal_speed`, `low_speed_penalty_fraction = 0.15`, and `low_speed_penalty_cap_fraction = 0.10` unless the vehicle catalog provides an override.
 * Practical usable battery fraction is sampled by battery condition. This is separate from operator reserve margin and temperature derating.
-* Temperature derating uses `lithium_temperature_capacity_derating_v1` as a usable-capacity factor, not as a duplicate mission-energy uplift.
+* Temperature derating uses `lithium_temperature_capacity_derating_v1` as a usable-capacity factor, not as a duplicate mission-energy uplift. The v1 curve is table-driven and aligned to Bressan-style LiFePO4 capacity-loss anchors: -20 deg C = 35% loss, -10 deg C = 15% loss, 2 deg C = 5% loss, 15-32 deg C = 0% loss, 52 deg C = 5% loss, and 62 deg C = 15% loss.
 * Search missions compare North-South and East-West swath plans and select the lower sampled energy burden.
 * Search turns use the carried-forward planning assumption of `0.01 hr` duration burden per turn plus a turn-distance estimate.
 * Battery shortfall uses P80 mission energy. Recharge/swap downtime is `battery_shortfall_p80 * recharge_hr` only when recharge is enabled.

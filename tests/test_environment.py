@@ -10,11 +10,14 @@ from core.environment import environmental_uplift_factor, salinity_buoyancy_pena
 class EnvironmentUpliftTests(unittest.TestCase):
     """Environmental uplift calculation examples."""
 
-    def test_temperature_penalty_matches_existing_logic(self) -> None:
-        """Cold and hot water penalties remain consistent with the monolith."""
-        self.assertAlmostEqual(temperature_energy_penalty(10.0), 0.05)
+    def test_temperature_penalty_matches_validation_curve(self) -> None:
+        """Temperature penalties follow the validation-backed planning curve."""
+        self.assertAlmostEqual(temperature_energy_penalty(-20.0), 0.35)
+        self.assertAlmostEqual(temperature_energy_penalty(-10.0), 0.15)
+        self.assertAlmostEqual(temperature_energy_penalty(2.0), 0.05)
         self.assertAlmostEqual(temperature_energy_penalty(25.0), 0.0)
-        self.assertAlmostEqual(temperature_energy_penalty(35.0), 0.015)
+        self.assertAlmostEqual(temperature_energy_penalty(52.0), 0.05)
+        self.assertAlmostEqual(temperature_energy_penalty(62.0), 0.15)
 
     def test_environmental_uplift_combines_penalties(self) -> None:
         """Demand-side uplift excludes temperature, which is now capacity derating."""

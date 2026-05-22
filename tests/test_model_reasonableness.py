@@ -366,7 +366,7 @@ class ModelReasonablenessTests(unittest.TestCase):
         default_vehicle = VEHICLE_CATALOG["REMUS 300 - 4.5 kWh"]
         high_hotel_vehicle = VEHICLE_CATALOG["Viperfish (Deep Water MCM)"]
         default_power = estimate_power_at_speed_kw(default_vehicle, 4.0)
-        explicit_default_power = estimate_power_at_speed_kw(default_vehicle, 4.0, hotel_fraction=0.35)
+        explicit_default_power = estimate_power_at_speed_kw(default_vehicle, 4.0, hotel_fraction=0.40)
         self.assertAlmostEqual(default_power, explicit_default_power)
         catalog_power = estimate_power_at_speed_kw(high_hotel_vehicle, 4.0)
         forced_default_power = estimate_power_at_speed_kw(high_hotel_vehicle, 4.0, hotel_fraction=0.35)

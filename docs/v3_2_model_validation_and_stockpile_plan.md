@@ -39,7 +39,7 @@ Recommended planning model:
 def estimate_power_at_speed_kw(
     vehicle: VehicleState,
     speed_kts: float,
-    hotel_fraction: float = 0.35,
+    hotel_power_fraction: float = 0.40,
     speed_exponent: float = 3.0,
 ) -> float:
     """Estimate total UUV power at speed using a simple cubic propulsion law.
@@ -51,8 +51,8 @@ def estimate_power_at_speed_kw(
     nominal_speed = max(vehicle.nominal_speed_kts, 0.1)
     requested_speed = max(speed_kts, 0.1)
     baseline_power = vehicle.average_power_kw
-    hotel_kw = baseline_power * hotel_fraction
-    propulsion_kw_nominal = baseline_power * (1.0 - hotel_fraction)
+    hotel_kw = baseline_power * hotel_power_fraction
+    propulsion_kw_nominal = baseline_power * (1.0 - hotel_power_fraction)
     speed_ratio = requested_speed / nominal_speed
     return hotel_kw + propulsion_kw_nominal * (speed_ratio ** speed_exponent)
 ```
@@ -61,8 +61,11 @@ Use this function anywhere mission energy currently uses `vehicle.average_power_
 
 Recommended defaults:
 
-- `hotel_fraction = 0.35`
+- `hotel_power_fraction = 0.40`
 - `speed_exponent = 3.0`
+- `min_efficient_speed = 0.65 * nominal_speed`
+- `low_speed_penalty_fraction = 0.15`
+- `low_speed_penalty_cap_fraction = 0.10`
 
 These should be documented as planning assumptions and later calibrated.
 

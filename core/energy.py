@@ -23,6 +23,7 @@ from core.environment import (
 )
 from core.sustainment import compute_sustainment_projection
 from core.geometry import clipped_search_lanes, isr_path_distance_per_loop_km
+from core.power import power_model_breakdown, speed_adjusted_power_kw
 from models.environment_model import EnvironmentData
 from models.mission_model import MissionArea
 from models.vehicle_model import VehicleState
@@ -125,17 +126,13 @@ def estimate_power_at_speed_kw(
     propulsion_multiplier: float = 1.0,
 ) -> float:
     """Estimate UUV power draw at requested speed using fixed hotel load plus cubic propulsion scaling."""
-    nominal_speed = max(vehicle.nominal_speed_kts, 0.1)
-    requested_speed = max(speed_kts, 0.1)
-    baseline_power = vehicle.average_power_kw
-    selected_hotel_fraction = vehicle.hotel_fraction if hotel_fraction is None else hotel_fraction
-    if selected_hotel_fraction is None:
-        selected_hotel_fraction = 0.35
-    bounded_hotel_fraction = min(max(float(selected_hotel_fraction), 0.05), 0.85)
-    hotel_kw = baseline_power * bounded_hotel_fraction
-    propulsion_kw_nominal = baseline_power * (1.0 - bounded_hotel_fraction)
-    speed_ratio = requested_speed / nominal_speed
-    return hotel_kw + propulsion_kw_nominal * (speed_ratio ** speed_exponent) * max(float(propulsion_multiplier), 0.0)
+    return power_model_breakdown(
+        vehicle,
+        speed_kts,
+        hotel_fraction=hotel_fraction,
+        speed_exponent=speed_exponent,
+        propulsion_multiplier=propulsion_multiplier,
+    ).total_power_kw
 
 
 def payload_weight_energy_multiplier(
@@ -400,6 +397,8 @@ def run_energy_simulation(
     recovery_mode = payload_recovery_mode(vehicle, bool(return_to_start))
     payload_returns_to_start = recovery_mode == "return_to_start"
     launch_recovery_energy, launch_recovery_overhead_hr, launch_recovery_power_kw = launch_recovery_energy_kwh(vehicle)
+    input_speed_kts = max(float(speed_kts or vehicle.nominal_speed_kts), 0.1)
+    input_power_breakdown = power_model_breakdown(vehicle, input_speed_kts)
     current_sigma_kts = max(0.10, 0.25 * max(current_mean, 0.1))
     sampled_current = np.clip(rng.normal(current_mean, current_sigma_kts, n), 0, None)
     sampled_temp = rng.normal(temp_mean, 1.5, n)
@@ -450,24 +449,24 @@ def run_energy_simulation(
         if mission_type in PAYLOAD_MISSIONS:
             route_distance = float(area.route_distance_km or 10.0)
             route_heading = float(area.route_heading_deg or 0.0)
-            outbound_time = route_leg_time_hr(route_distance, speed_kts, cur, current_dir, route_heading)
+            outbound_time = route_leg_time_hr(route_distance, input_speed_kts, cur, current_dir, route_heading)
             return_time = 0.0
             if payload_returns_to_start:
-                return_time = route_leg_time_hr(route_distance, speed_kts, cur, current_dir, (route_heading + 180) % 360)
-            transit_time = additional_transit_km / max(speed_kts * 1.852, 0.1)
+                return_time = route_leg_time_hr(route_distance, input_speed_kts, cur, current_dir, (route_heading + 180) % 360)
+            transit_time = additional_transit_km / max(input_speed_kts * 1.852, 0.1)
             duration_single = outbound_time + return_time + transit_time + launch_recovery_overhead_hr
-            current_penalty = payload_current_penalty(cur, current_dir, route_heading, speed_kts)
-            outbound_power_kw = estimate_power_at_speed_kw(vehicle, speed_kts, propulsion_multiplier=payload_propulsion_multiplier)
-            return_power_kw = estimate_power_at_speed_kw(vehicle, speed_kts)
+            current_penalty = payload_current_penalty(cur, current_dir, route_heading, input_speed_kts)
+            outbound_power_kw = estimate_power_at_speed_kw(vehicle, input_speed_kts, propulsion_multiplier=payload_propulsion_multiplier)
+            return_power_kw = speed_adjusted_power_kw(vehicle, input_speed_kts)
             environmental_multiplier = environmental_uplift_factor(temp, current_penalty, salinity_penalty)
             energy_single = (
                 ((outbound_power_kw * (outbound_time + transit_time)) + (return_power_kw * return_time)) * environmental_multiplier
             ) + launch_recovery_energy
         elif mission_type in ISR_MISSIONS:
-            endurance_speed_kts = max(float(speed_kts or vehicle.nominal_speed_kts), 0.1)
+            endurance_speed_kts = input_speed_kts
             current_penalty = isr_current_power_penalty(cur, endurance_speed_kts)
             environmental_multiplier = environmental_uplift_factor(temp, current_penalty, salinity_penalty)
-            endurance_power_kw = estimate_power_at_speed_kw(vehicle, endurance_speed_kts)
+            endurance_power_kw = speed_adjusted_power_kw(vehicle, endurance_speed_kts)
             persistence = compute_isr_persistence(
                 loop_distance_km=isr_loop_distance_km,
                 usable_energy_kwh=usable_battery_sample,
@@ -483,10 +482,10 @@ def run_energy_simulation(
             option_results: list[tuple[float, float, SearchPlan]] = []
             for option in search_options:
                 distance = option.total_distance_km + additional_transit_km
-                base_duration = distance / max(speed_kts * 1.852, 0.1)
-                duration_candidate = base_duration * search_current_duration_multiplier(cur, current_dir, option.track_heading_deg, speed_kts)
+                base_duration = distance / max(input_speed_kts * 1.852, 0.1)
+                duration_candidate = base_duration * search_current_duration_multiplier(cur, current_dir, option.track_heading_deg, input_speed_kts)
                 duration_candidate += option.turns * 0.01
-                requested_power_kw = estimate_power_at_speed_kw(vehicle, speed_kts)
+                requested_power_kw = speed_adjusted_power_kw(vehicle, input_speed_kts)
                 energy_candidate = requested_power_kw * duration_candidate * (1 + salinity_penalty)
                 option_results.append((energy_candidate, duration_candidate, option))
 
@@ -555,7 +554,7 @@ def run_energy_simulation(
             "isr_completed_loops": completed_loops_single_set,
             "isr_remaining_partial_loop_pct": float(np.percentile(partial_loops, 50)),
             "isr_available_mission_energy_kwh": usable_battery_per_set,
-            "isr_power_draw_kw": estimate_power_at_speed_kw(vehicle, max(float(speed_kts or vehicle.nominal_speed_kts), 0.1)),
+            "isr_power_draw_kw": speed_adjusted_power_kw(vehicle, input_speed_kts),
             "isr_adjusted_power_draw_kw": adjusted_power_kw,
             "isr_single_set_endurance_hr": single_set_endurance_hr,
             "isr_total_inventory_endurance_hr": total_inventory_endurance_hr,
@@ -593,11 +592,11 @@ def run_energy_simulation(
             current_mean,
             current_dir,
             float(area.route_heading_deg or 0.0),
-            speed_kts,
+            input_speed_kts,
         ) * 100.0
         mean_environmental_multiplier = 1.0 + (mean_temp_uplift_pct + mean_current_uplift_pct + mean_salinity_uplift_pct) / 100.0
     elif mission_type in ISR_MISSIONS:
-        mean_current_uplift_pct = isr_current_power_penalty(current_mean, max(float(speed_kts or vehicle.nominal_speed_kts), 0.1)) * 100.0
+        mean_current_uplift_pct = isr_current_power_penalty(current_mean, input_speed_kts) * 100.0
         mean_environmental_multiplier = 1.0 + (mean_temp_uplift_pct + mean_current_uplift_pct + mean_salinity_uplift_pct) / 100.0
     elif mission_type in SEARCH_MISSIONS and search_options:
         selected_search_plan = next(
@@ -609,7 +608,7 @@ def run_energy_simulation(
                 current_mean,
                 current_dir,
                 selected_search_plan.track_heading_deg,
-                speed_kts,
+                input_speed_kts,
             )
             - 1.0
         ) * 100.0
@@ -702,7 +701,15 @@ def run_energy_simulation(
         "source_note": vehicle.source_note,
         "usable_basis": vehicle.usable_basis,
         "track_spacing_m": track_spacing_m,
-        "speed_kts": speed_kts,
+        "speed_kts": input_speed_kts,
+        "nominal_speed_kts": input_power_breakdown.nominal_speed_kts,
+        "nominal_average_power_kw": input_power_breakdown.nominal_power_kw,
+        "speed_adjusted_power_kw": input_power_breakdown.total_power_kw,
+        "hotel_power_kw": input_power_breakdown.hotel_power_kw,
+        "propulsion_power_kw": input_power_breakdown.propulsion_power_kw,
+        "low_speed_penalty_kw": input_power_breakdown.low_speed_penalty_kw,
+        "hotel_power_fraction": input_power_breakdown.hotel_fraction,
+        "min_efficient_speed_kts": input_power_breakdown.min_efficient_speed_kts,
         "search_area_km2": area.area_km2 if mission_type in SEARCH_MISSIONS else None,
         "search_width_km": area.width_km,
         "search_height_km": area.height_km,
@@ -748,6 +755,11 @@ def run_energy_simulation(
         ("Temperature capacity factor", mean_temperature_capacity_factor, ""),
         ("Operator reserve fraction", reserve_fraction, ""),
         ("Usable battery basis", vehicle.usable_basis, ""),
+        ("Nominal average power", input_power_breakdown.nominal_power_kw, "kW"),
+        ("Speed-adjusted power draw", input_power_breakdown.total_power_kw, "kW"),
+        ("Hotel power component", input_power_breakdown.hotel_power_kw, "kW"),
+        ("Propulsion power component", input_power_breakdown.propulsion_power_kw, "kW"),
+        ("Low-speed power correction", input_power_breakdown.low_speed_penalty_kw, "kW"),
         ("Payload weight", max(float(payload_weight_kg or 0.0), 0.0), "kg"),
         ("Payload carriage penalty", payload_penalty_pct if mission_type in PAYLOAD_MISSIONS else 0.0, "%"),
         ("Payload propulsion penalty multiplier", payload_propulsion_multiplier if mission_type in PAYLOAD_MISSIONS else 1.0, ""),

@@ -777,6 +777,8 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertLess(str(payload_run[11]).index("BLUF"), str(payload_run[11]).index("Executive Results Summary"))
         self.assertLess(str(payload_run[11]).index("Executive Results Summary"), str(payload_run[11]).index("Technical Traceability / Model Detail"))
         self.assertIn("Energy Detail", str(payload_run[2]))
+        self.assertIn("Speed-adjusted power draw", str(payload_run[2]))
+        self.assertIn("Hotel power component", str(payload_run[2]))
         self.assertIn("section-insight-card", str(payload_run[2]))
         self.assertIn("report-table", str(payload_run[2]))
         self.assertIn("Battery and Sustainment Detail", str(payload_run[3]))

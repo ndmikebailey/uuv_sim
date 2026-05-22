@@ -5,19 +5,42 @@ from __future__ import annotations
 import math
 
 
+TEMPERATURE_CAPACITY_PENALTY_POINTS: tuple[tuple[float, float], ...] = (
+    (-20.0, 0.35),
+    (-10.0, 0.15),
+    (2.0, 0.05),
+    (15.0, 0.0),
+    (32.0, 0.0),
+    (52.0, 0.05),
+    (62.0, 0.15),
+)
+
+
 def current_components(current_speed_kts: float, current_direction_deg: float, heading_deg: float) -> tuple[float, float]:
     """Resolve current into along-track and cross-track components in knots."""
     rel = math.radians((current_direction_deg - heading_deg + 180) % 360 - 180)
     return current_speed_kts * math.cos(rel), current_speed_kts * math.sin(rel)
 
 
-def temperature_energy_penalty(temp_c: float) -> float:
-    """Return the existing battery/environment energy penalty from sea temperature."""
-    if temp_c < 15:
-        return min(0.25, (15 - temp_c) * 0.01)
-    if temp_c > 32:
-        return min(0.15, (temp_c - 32) * 0.005)
+def _piecewise_linear_penalty(temp_c: float, points: tuple[tuple[float, float], ...]) -> float:
+    """Return linearly interpolated penalty for a sorted temperature table."""
+    ordered = sorted(points, key=lambda item: item[0])
+    if temp_c <= ordered[0][0]:
+        return ordered[0][1]
+    if temp_c >= ordered[-1][0]:
+        return ordered[-1][1]
+
+    for (x0, y0), (x1, y1) in zip(ordered, ordered[1:]):
+        if x0 <= temp_c <= x1:
+            fraction = (temp_c - x0) / (x1 - x0)
+            return y0 + fraction * (y1 - y0)
+
     return 0.0
+
+
+def temperature_energy_penalty(temp_c: float) -> float:
+    """Return usable battery-capacity penalty from sea/battery temperature."""
+    return _piecewise_linear_penalty(float(temp_c), TEMPERATURE_CAPACITY_PENALTY_POINTS)
 
 
 def payload_current_penalty(current_speed_kts: float, current_direction_deg: float, heading_deg: float, vehicle_speed_kts: float) -> float:

@@ -41,12 +41,13 @@ class BatteryModelTests(unittest.TestCase):
         self.assertLess(reserve, no_reserve)
 
     def test_temperature_capacity_curve(self) -> None:
-        """Cold water should reduce usable capacity monotonically."""
+        """Temperature derating should follow the validation-backed planning anchors."""
+        self.assertAlmostEqual(lithium_temperature_capacity_factor(-20.0), 0.65)
+        self.assertAlmostEqual(lithium_temperature_capacity_factor(-10.0), 0.85)
+        self.assertAlmostEqual(lithium_temperature_capacity_factor(2.0), 0.95)
         self.assertEqual(lithium_temperature_capacity_factor(25.0), 1.0)
-        self.assertEqual(lithium_temperature_capacity_factor(10.0), 1.0)
-        self.assertEqual(lithium_temperature_capacity_factor(5.0), 0.96)
-        self.assertLess(lithium_temperature_capacity_factor(-5.0), lithium_temperature_capacity_factor(5.0))
-        self.assertLess(lithium_temperature_capacity_factor(-25.0), lithium_temperature_capacity_factor(-15.0))
+        self.assertAlmostEqual(lithium_temperature_capacity_factor(52.0), 0.95)
+        self.assertAlmostEqual(lithium_temperature_capacity_factor(62.0), 0.85)
 
     def test_temperature_derating_impacts_usable_energy(self) -> None:
         """Temperature factor should reduce capacity, not energy demand."""

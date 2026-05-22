@@ -23,6 +23,10 @@ class VehicleState:
     source_note: str
     dry_weight_kg: Optional[float] = None
     hotel_fraction: Optional[float] = None
+    hotel_power_fraction: Optional[float] = None
+    min_efficient_speed_kts: Optional[float] = None
+    low_speed_penalty_fraction: Optional[float] = None
+    low_speed_penalty_cap_fraction: Optional[float] = None
     recoverable: Optional[bool] = None
     rechargeable: Optional[bool] = None
     default_payload_recovery_mode: Optional[str] = None

@@ -210,7 +210,7 @@ Current active alpha build.
   * Polygon centroid is computed in the Python geometry core from local projected coordinates.
 * Preserved environmental uplift behavior:
   * Current-based route/search penalties remain consistent with v2 logic.
-  * Temperature penalty remains consistent with v2 logic.
+  * Temperature derating is now handled as a table-driven battery capacity factor.
 * Added full polygon support for ISR and Area Search / MCM mission loading.
 * Added mission map snapshot report panel beside the search-pattern swath overlay.
 * Added tests for geometry area and environmental uplift.

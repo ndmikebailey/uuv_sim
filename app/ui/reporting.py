@@ -1176,15 +1176,25 @@ def build_energy_summary_rows(summary: dict[str, object]) -> list[tuple[str, obj
             total_uplift_pct = (float(environmental_multiplier) - 1.0) * 100.0
         except (TypeError, ValueError):
             total_uplift_pct = ""
-    return [
+    rows = [
         ("Expected mission energy (P50)", _float_or_blank(summary.get("p50_energy_kwh")), "kWh"),
         ("Planning-level mission energy (P80)", p80, "kWh"),
         ("Conservative mission energy (P95)", _float_or_blank(summary.get("p95_energy_kwh")), "kWh"),
         ("Mission duration", _float_or_blank(summary.get("mean_duration_hr")), "hr"),
         ("Total environmental uplift", total_uplift_pct, "%"),
+        ("Nominal average power", _float_or_blank(summary.get("nominal_average_power_kw")), "kW"),
+        ("Speed-adjusted power draw", _float_or_blank(summary.get("speed_adjusted_power_kw")), "kW"),
+        ("Hotel power component", _float_or_blank(summary.get("hotel_power_kw")), "kW"),
+        ("Propulsion power component", _float_or_blank(summary.get("propulsion_power_kw")), "kW"),
+        ("Low-speed power correction", _float_or_blank(summary.get("low_speed_penalty_kw")), "kW"),
+        ("Minimum efficient speed", _float_or_blank(summary.get("min_efficient_speed_kts")), "kts"),
         ("Planning-level energy margin (P80)", total_available - p80, "kWh"),
         ("Conservative energy margin (P95)", total_available - p95, "kWh"),
     ]
+    hotel_fraction = _as_float(summary.get("hotel_power_fraction"))
+    if hotel_fraction is not None:
+        rows.insert(10, ("Hotel power fraction", hotel_fraction * 100.0, "%"))
+    return rows
 
 
 def build_battery_sustainment_rows(summary: dict[str, object]) -> list[tuple[str, object, str]]:
