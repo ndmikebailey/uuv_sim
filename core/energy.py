@@ -23,7 +23,7 @@ from core.environment import (
 )
 from core.sustainment import compute_sustainment_projection
 from core.geometry import clipped_search_lanes, isr_path_distance_per_loop_km
-from core.power import power_model_breakdown, speed_adjusted_power_kw
+from core.power import power_model_breakdown, sample_power_model_breakdown, speed_adjusted_power_kw
 from models.environment_model import EnvironmentData
 from models.mission_model import MissionArea
 from models.vehicle_model import VehicleState
@@ -76,6 +76,10 @@ class SimulationResult:
     equivalent_rows: list[tuple[str, object, str]]
     energy_samples_kwh: np.ndarray
     duration_samples_hr: np.ndarray
+    power_samples_kw: np.ndarray
+    hotel_power_samples_kw: np.ndarray
+    propulsion_power_samples_kw: np.ndarray
+    low_speed_penalty_samples_kw: np.ndarray
 
 
 def route_leg_time_hr(
@@ -430,6 +434,14 @@ def run_energy_simulation(
     total_available_kwh = usable_battery_per_set * max(1, battery_sets_available)
     energies: list[float] = []
     durations: list[float] = []
+    power_samples_kw: list[float] = []
+    hotel_power_samples_kw: list[float] = []
+    propulsion_power_samples_kw: list[float] = []
+    low_speed_penalty_samples_kw: list[float] = []
+    speed_exponent_samples: list[float] = []
+    hotel_fraction_samples: list[float] = []
+    propulsion_multiplier_samples: list[float] = []
+    nominal_power_scale_samples: list[float] = []
     recommended_orientations: list[str] = []
     isr_persistence_results: list[ISRPersistenceResult] = []
 
@@ -445,6 +457,8 @@ def run_energy_simulation(
         cur = float(sampled_current[index])
         temp = float(sampled_temp[index])
         usable_battery_sample = float(sampled_usable_battery_per_set[index])
+        sampled_power = sample_power_model_breakdown(vehicle, input_speed_kts, rng)
+        active_power = sampled_power
 
         if mission_type in PAYLOAD_MISSIONS:
             route_distance = float(area.route_distance_km or 10.0)
@@ -456,8 +470,29 @@ def run_energy_simulation(
             transit_time = additional_transit_km / max(input_speed_kts * 1.852, 0.1)
             duration_single = outbound_time + return_time + transit_time + launch_recovery_overhead_hr
             current_penalty = payload_current_penalty(cur, current_dir, route_heading, input_speed_kts)
-            outbound_power_kw = estimate_power_at_speed_kw(vehicle, input_speed_kts, propulsion_multiplier=payload_propulsion_multiplier)
-            return_power_kw = speed_adjusted_power_kw(vehicle, input_speed_kts)
+            outbound_power = power_model_breakdown(
+                vehicle,
+                input_speed_kts,
+                hotel_fraction=sampled_power.hotel_fraction,
+                speed_exponent=sampled_power.speed_exponent,
+                propulsion_multiplier=sampled_power.propulsion_multiplier * payload_propulsion_multiplier,
+                nominal_power_scale=sampled_power.nominal_power_scale,
+                low_speed_penalty_fraction=sampled_power.low_speed_penalty_fraction,
+            )
+            return_power = sampled_power
+            outbound_power_kw = outbound_power.total_power_kw
+            return_power_kw = return_power.total_power_kw
+            moving_duration = max(outbound_time + transit_time + return_time, 0.001)
+            active_power = power_model_breakdown(
+                vehicle,
+                input_speed_kts,
+                hotel_fraction=sampled_power.hotel_fraction,
+                speed_exponent=sampled_power.speed_exponent,
+                propulsion_multiplier=sampled_power.propulsion_multiplier
+                * (((outbound_time + transit_time) * payload_propulsion_multiplier + return_time) / moving_duration),
+                nominal_power_scale=sampled_power.nominal_power_scale,
+                low_speed_penalty_fraction=sampled_power.low_speed_penalty_fraction,
+            )
             environmental_multiplier = environmental_uplift_factor(temp, current_penalty, salinity_penalty)
             energy_single = (
                 ((outbound_power_kw * (outbound_time + transit_time)) + (return_power_kw * return_time)) * environmental_multiplier
@@ -466,7 +501,7 @@ def run_energy_simulation(
             endurance_speed_kts = input_speed_kts
             current_penalty = isr_current_power_penalty(cur, endurance_speed_kts)
             environmental_multiplier = environmental_uplift_factor(temp, current_penalty, salinity_penalty)
-            endurance_power_kw = speed_adjusted_power_kw(vehicle, endurance_speed_kts)
+            endurance_power_kw = sampled_power.total_power_kw
             persistence = compute_isr_persistence(
                 loop_distance_km=isr_loop_distance_km,
                 usable_energy_kwh=usable_battery_sample,
@@ -485,7 +520,7 @@ def run_energy_simulation(
                 base_duration = distance / max(input_speed_kts * 1.852, 0.1)
                 duration_candidate = base_duration * search_current_duration_multiplier(cur, current_dir, option.track_heading_deg, input_speed_kts)
                 duration_candidate += option.turns * 0.01
-                requested_power_kw = speed_adjusted_power_kw(vehicle, input_speed_kts)
+                requested_power_kw = sampled_power.total_power_kw
                 energy_candidate = requested_power_kw * duration_candidate * (1 + salinity_penalty)
                 option_results.append((energy_candidate, duration_candidate, option))
 
@@ -496,9 +531,25 @@ def run_energy_simulation(
 
         energies.append(energy_single * mission_sequences)
         durations.append(duration_single * mission_sequences)
+        power_samples_kw.append(active_power.total_power_kw)
+        hotel_power_samples_kw.append(active_power.hotel_power_kw)
+        propulsion_power_samples_kw.append(active_power.propulsion_power_kw)
+        low_speed_penalty_samples_kw.append(active_power.low_speed_penalty_kw)
+        speed_exponent_samples.append(active_power.speed_exponent)
+        hotel_fraction_samples.append(active_power.hotel_fraction)
+        propulsion_multiplier_samples.append(active_power.propulsion_multiplier)
+        nominal_power_scale_samples.append(active_power.nominal_power_scale)
 
     energy_arr = np.array(energies)
     duration_arr = np.array(durations)
+    power_arr = np.array(power_samples_kw)
+    hotel_power_arr = np.array(hotel_power_samples_kw)
+    propulsion_power_arr = np.array(propulsion_power_samples_kw)
+    low_speed_penalty_arr = np.array(low_speed_penalty_samples_kw)
+    speed_exponent_arr = np.array(speed_exponent_samples)
+    hotel_fraction_arr = np.array(hotel_fraction_samples)
+    propulsion_multiplier_arr = np.array(propulsion_multiplier_samples)
+    nominal_power_scale_arr = np.array(nominal_power_scale_samples)
     p50 = float(np.percentile(energy_arr, 50))
     p80 = float(np.percentile(energy_arr, 80))
     p95 = float(np.percentile(energy_arr, 95))
@@ -710,6 +761,14 @@ def run_energy_simulation(
         "low_speed_penalty_kw": input_power_breakdown.low_speed_penalty_kw,
         "hotel_power_fraction": input_power_breakdown.hotel_fraction,
         "min_efficient_speed_kts": input_power_breakdown.min_efficient_speed_kts,
+        "power_draw_mean_kw": float(np.mean(power_arr)),
+        "power_draw_p10_kw": float(np.percentile(power_arr, 10)),
+        "power_draw_p50_kw": float(np.percentile(power_arr, 50)),
+        "power_draw_p90_kw": float(np.percentile(power_arr, 90)),
+        "speed_exponent_mean": float(np.mean(speed_exponent_arr)),
+        "hotel_fraction_mean": float(np.mean(hotel_fraction_arr)),
+        "propulsion_multiplier_mean": float(np.mean(propulsion_multiplier_arr)),
+        "nominal_power_scale_mean": float(np.mean(nominal_power_scale_arr)),
         "search_area_km2": area.area_km2 if mission_type in SEARCH_MISSIONS else None,
         "search_width_km": area.width_km,
         "search_height_km": area.height_km,
@@ -815,4 +874,8 @@ def run_energy_simulation(
         equivalent_rows=energy_equivalent_rows(p80),
         energy_samples_kwh=energy_arr,
         duration_samples_hr=duration_arr,
+        power_samples_kw=power_arr,
+        hotel_power_samples_kw=hotel_power_arr,
+        propulsion_power_samples_kw=propulsion_power_arr,
+        low_speed_penalty_samples_kw=low_speed_penalty_arr,
     )
