@@ -196,6 +196,19 @@
     "usable_basis": "Planning assumption: 100% usable primary cell. Uses 39 alkaline battery packs. Non-rechargeable.",
     "source_note": "Legacy submarine Dry Deck Shelter (DDS) UUV based on REMUS 600. Alkaline battery configuration, no recharging."
   },
+  "REMUS 600 / MK18 Mod 2 Kingfish legacy proxy": {
+    "battery_kwh": 9.5,
+    "estimated_endurance_hr": 70.0,
+    "nominal_speed_kts": 3.0,
+    "max_speed_kts": 5.0,
+    "recharge_hr": 38.0,
+    "recoverable": true,
+    "rechargeable": true,
+    "default_payload_recovery_mode": "return_to_start",
+    "usable_fraction": 0.88,
+    "usable_basis": "Planning proxy: 88% usable Li-ion assumption. Battery kWh is endurance-derived from a 70 hr at 3 kt public endurance claim and should be replaced when a public battery capacity source is confirmed.",
+    "source_note": "REMUS 600 / MK18 Mod 2 Kingfish legacy proxy. Public characteristics entered: 600 m depth rating, 12.75 in / 32.4 cm diameter, 3 kt nominal speed, 5 kt max speed, and up to 70 hr endurance at 3 kt. Battery chemistry is likely Li-ion, but public battery_kwh was not confidently found; modeled as a placeholder endurance-derived planning proxy."
+  },
   "MK20 Mod 0 Razorback (TTL&R)": {
     "battery_kwh": 5.2,
     "estimated_endurance_hr": 18.4,

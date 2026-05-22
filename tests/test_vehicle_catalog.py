@@ -19,6 +19,7 @@ class VehicleCatalogTests(unittest.TestCase):
             "Iver3 580 (Legacy VSW)": (0.8, 8.0, 4.0),
             "Iver4 900 (Expeditionary MCM)": (2.0, 14.0, 5.0),
             "MK19 Mod 0 Razorback (DDS)": (7.0, 24.0, 4.0),
+            "REMUS 600 / MK18 Mod 2 Kingfish legacy proxy": (9.5, 70.0, 5.0),
             "MK20 Mod 0 Razorback (TTL&R)": (5.2, 18.4, 6.0),
             "AN/AQS-23 Barracuda": (0.8, 1.5, 10.0),
             "Next-Gen MUUV (REMUS 620)": (15.0, 110.0, 8.0),
@@ -46,6 +47,13 @@ class VehicleCatalogTests(unittest.TestCase):
     def test_optional_hotel_fraction_entries_load(self) -> None:
         self.assertEqual(VEHICLE_CATALOG["Viperfish (Deep Water MCM)"].hotel_fraction, 0.45)
         self.assertIsNone(VEHICLE_CATALOG["REMUS 300 - 4.5 kWh"].hotel_fraction)
+
+    def test_kingfish_proxy_metadata_loads(self) -> None:
+        vehicle = VEHICLE_CATALOG["REMUS 600 / MK18 Mod 2 Kingfish legacy proxy"]
+        self.assertIn("planning proxy", vehicle.usable_basis.lower())
+        self.assertIn("600 m depth rating", vehicle.source_note)
+        self.assertIn("12.75 in / 32.4 cm diameter", vehicle.source_note)
+        self.assertIn("public battery_kwh was not confidently found", vehicle.source_note)
 
 
 if __name__ == "__main__":
