@@ -403,7 +403,7 @@ def run_energy_simulation(
     launch_recovery_energy, launch_recovery_overhead_hr, launch_recovery_power_kw = launch_recovery_energy_kwh(vehicle)
     input_speed_kts = max(float(speed_kts or vehicle.nominal_speed_kts), 0.1)
     input_power_breakdown = power_model_breakdown(vehicle, input_speed_kts)
-    current_sigma_kts = max(0.10, 0.25 * max(current_mean, 0.1))
+    current_sigma_kts = 0.0 if current_mean <= 0.0 else max(0.02, 0.25 * current_mean)
     sampled_current = np.clip(rng.normal(current_mean, current_sigma_kts, n), 0, None)
     sampled_temp = rng.normal(temp_mean, 1.5, n)
     sampled_temperature_capacity_factor = np.array([lithium_temperature_capacity_factor(float(temp)) for temp in sampled_temp])

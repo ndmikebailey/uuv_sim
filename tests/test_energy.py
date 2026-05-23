@@ -126,6 +126,44 @@ class EnergyReproducibilityTests(unittest.TestCase):
         self.assertFalse(np.array_equal(first.power_samples_kw, second.power_samples_kw))
         self.assertEqual(len(first.power_samples_kw), 12)
 
+    def test_zero_and_small_current_remain_small(self) -> None:
+        """Zero current should not be inflated by sampling, and 0.1 kt should stay small."""
+        vehicle = VEHICLE_CATALOG["REMUS 300 - 4.5 kWh"]
+        area = manual_rectangle_area(3.0, 3.0, 9.0)
+        zero_current = run_energy_simulation(
+            vehicle=vehicle,
+            mission_type="ISR",
+            area=area,
+            environment=EnvironmentData(current_speed_kts_mean=0.0, current_direction_deg_mean=90.0, sea_surface_temp_c_mean=25.0),
+            additional_transit_km=0.0,
+            track_spacing_m=200.0,
+            return_to_start=True,
+            speed_kts=3.5,
+            battery_sets_available=1,
+            recharge_allowed=True,
+            mission_sequences=1,
+            rng_seed=200,
+            monte_carlo_runs=12,
+        )
+        small_current = run_energy_simulation(
+            vehicle=vehicle,
+            mission_type="ISR",
+            area=area,
+            environment=EnvironmentData(current_speed_kts_mean=0.1, current_direction_deg_mean=90.0, sea_surface_temp_c_mean=25.0),
+            additional_transit_km=0.0,
+            track_spacing_m=200.0,
+            return_to_start=True,
+            speed_kts=3.5,
+            battery_sets_available=1,
+            recharge_allowed=True,
+            mission_sequences=1,
+            rng_seed=200,
+            monte_carlo_runs=12,
+        )
+        self.assertEqual(zero_current.summary["current_uplift_pct"], 0.0)
+        self.assertAlmostEqual(float(zero_current.summary["isr_environmental_multiplier"]), 1.0)
+        self.assertLess(float(small_current.summary["current_uplift_pct"]), 0.5)
+
 
 if __name__ == "__main__":
     unittest.main()

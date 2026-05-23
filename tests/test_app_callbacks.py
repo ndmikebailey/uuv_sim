@@ -28,10 +28,12 @@ from utils.constants import APP_VERSION, ENERGY_MODEL_VERSION
 class FakeMetocService:
     """Deterministic METOC service for app callback tests."""
 
+    current_speed_kts_mean = 0.6
+
     def fetch(self, lat: float, lon: float) -> EnvironmentData:
         """Return stable environment data while preserving query traceability."""
         return EnvironmentData(
-            current_speed_kts_mean=0.6,
+            current_speed_kts_mean=self.current_speed_kts_mean,
             current_direction_deg_mean=85.0,
             sea_surface_temp_c_mean=26.0,
             wind_speed_kts_mean=10.0,
@@ -820,6 +822,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertEqual(payload_run[8]["visible"], True)
         self.assertIsNotNone(payload_run[8]["value"])
         self.assertIn("Engineering Snapshot", payload_run[8]["value"].axes[0].get_title())
+
         self.assertIn("Mission Map Overlay", str(payload_run[9]["value"]))
         self.assertIn("Current vector", str(payload_run[9]["value"]))
         self.assertIn("METOC point", str(payload_run[9]["value"]))
@@ -866,6 +869,14 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertIn("ISR patrol route", isr_labels)
         self.assertIn("Current vector", isr_labels)
         self.assertNotIn("Return leg", isr_labels)
+
+    def test_zero_current_prefill_remains_zero(self) -> None:
+        """A fetched zero-current condition should not be replaced by the manual default."""
+        service = FakeMetocService()
+        service.current_speed_kts_mean = 0.0
+        main.METOC_SERVICE = service  # type: ignore[assignment]
+        built = main.build_mission_and_prefill("ISR", json.dumps(RECTANGLE_GEOMETRY))
+        self.assertEqual(built[11], 0.0)
 
     def test_navigation_uses_native_gradio_tabs(self) -> None:
         """Workflow navigation should use Gradio tab state instead of brittle HTML click helpers."""
