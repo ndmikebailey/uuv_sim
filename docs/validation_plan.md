@@ -1,8 +1,8 @@
 # Validation Plan
 
-## v3.5 Beta Purpose
+## v4 Beta Purpose
 
-The v3.5 beta build supports controlled dry runs, team testing, manual UI testing, and model-review planning. It should not be treated as an operational baseline until reproducibility, internal traceability records, source traceability, and test coverage are reviewed.
+The v4 beta build supports controlled dry runs, team testing, manual UI testing, and model-review planning. It should not be treated as an operational baseline until reproducibility, internal traceability records, source traceability, and test coverage are reviewed.
 
 ## Dry Run Checklist
 

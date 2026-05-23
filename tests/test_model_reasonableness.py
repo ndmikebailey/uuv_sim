@@ -447,7 +447,7 @@ class ModelReasonablenessTests(unittest.TestCase):
         self.assertEqual(search["planning_energy_basis"], "mission_total")
         self.assertEqual(isr["planning_energy_basis"], "mission_total")
         self.assertEqual(isr["planning_duration_basis"], "endurance_window")
-        self.assertEqual(isr["planning_energy_kwh"], isr["p95_energy_kwh"])
+        self.assertEqual(isr["planning_energy_kwh"], isr["recommended_planning_energy_kwh"])
         self.assertEqual(isr["single_set_endurance_hr"], isr["isr_single_set_endurance_hr"])
         self.assertEqual(isr["total_inventory_endurance_hr"], isr["isr_total_inventory_endurance_hr"])
 

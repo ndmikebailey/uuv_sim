@@ -1,6 +1,6 @@
 # Source Register
 
-Configuration-control register for assumptions used by the v3.5 beta UUV mission planning tool.
+Configuration-control register for assumptions used by the v4 beta UUV mission planning tool.
 
 | Item | Status | Source / Basis | Notes |
 | --- | --- | --- | --- |

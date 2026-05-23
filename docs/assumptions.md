@@ -25,6 +25,8 @@ Vehicle assumptions are loaded from `data/vehicle_catalog.json`.
 
 * Current direction is treated as direction of flow.
 * Payload missions apply a cross-current energy penalty.
+* Mission sensor-mode power is sampled by mission type and added to active segment power without replacing the existing hotel/propulsion model: Endurance/Transit `0-25 W`, ISR/Persistence `50-75 W`, and Search/MCM `75-150 W`.
+* Search/MCM applies the active Search/MCM sensor range to search/survey duration; added transit uses the low Endurance/Transit sensor range rather than the full MCM range.
 * Search missions apply along-current and cross-current duration multipliers.
 * ISR missions apply a modest station-keeping/current power burden relative to selected endurance speed.
 * Temperature penalties are:

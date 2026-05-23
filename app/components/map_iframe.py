@@ -34,7 +34,7 @@ def build_leaflet_iframe(region_name: str = "Guam") -> str:
 </head>
 <body>
   <div id="map"></div>
-  <div class="note">Draw a line, rectangle, or polygon for ISR; draw a rectangle or polygon for Area Search / MCM; draw a line for Payload Delivery.</div>
+  <div class="note">Draw a line, rectangle, or polygon for ISR; draw a rectangle or polygon for Area Search / MCM; draw a line for Route / Transit.</div>
   <div id="output">
     <div class="snap-grid">
       <div class="snap-card"><div class="snap-label">Selected Geometry</div><div class="snap-value">Not loaded</div><div class="snap-sub">Draw a rectangle, polygon, or line.</div></div>

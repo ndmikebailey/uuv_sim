@@ -28,14 +28,21 @@ MODEL_ASSUMPTIONS: dict[str, ModelAssumption] = {
         key="default_hotel_load_fraction",
         value=0.40,
         rationale="Separates fixed hotel/sensor/control load from speed-dependent propulsion load.",
-        source="Engineering planning assumption for v3.5 beta speed-aware power correction.",
+        source="Engineering planning assumption for v4 beta speed-aware power correction.",
+        confidence="low-medium",
+    ),
+    "mission_sensor_mode_power_ranges": ModelAssumption(
+        key="mission_sensor_mode_power_ranges",
+        value="Endurance/Transit uniform 0-25 W; ISR/Persistence uniform 50-75 W; Search/MCM uniform 75-150 W",
+        rationale="Represents uncertainty in onboard sensors, processing, navigation support, communications, and mission-equipment demand by active mission segment without replacing hotel or propulsion power.",
+        source="AUS reconstruction calibration finding bounded by public UUV endurance specification sheets and mission-configuration evidence.",
         confidence="low-medium",
     ),
     "default_usable_battery_fraction": ModelAssumption(
         key="default_usable_battery_fraction",
         value=0.88,
         rationale="Legacy catalog value retained for compatibility; current simulations sample battery condition separately from operator reserve margin.",
-        source="Public baseline catalog planning assumption retained in v3.5 beta.",
+        source="Public baseline catalog planning assumption retained in v4 beta.",
         confidence="medium",
     ),
     "usable_battery_fraction_range": ModelAssumption(
@@ -54,7 +61,7 @@ MODEL_ASSUMPTIONS: dict[str, ModelAssumption] = {
     ),
     "open_meteo_representative_point_policy": ModelAssumption(
         key="open_meteo_representative_point_policy",
-        value="payload route midpoint; ISR first patrol point; search area centroid",
+        value="route/transit midpoint; ISR first patrol point; search area centroid",
         rationale="Uses representative lookup points while multi-area Search/MCM samples each area centroid and aggregates METOC values.",
         source="core.mission.choose_environment_lookup_point.",
         confidence="medium",

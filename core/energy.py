@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import secrets
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 
@@ -80,6 +80,13 @@ class SimulationResult:
     hotel_power_samples_kw: np.ndarray
     propulsion_power_samples_kw: np.ndarray
     low_speed_penalty_samples_kw: np.ndarray
+    mission_sensor_power_samples_kw: np.ndarray
+    transit_sensor_power_samples_kw: np.ndarray
+    mission_sensor_energy_samples_kwh: np.ndarray
+    active_sensor_energy_samples_kwh: np.ndarray
+    transit_sensor_energy_samples_kwh: np.ndarray
+    active_sensor_duration_samples_hr: np.ndarray
+    total_active_power_samples_kw: np.ndarray
 
 
 def route_leg_time_hr(
@@ -137,6 +144,50 @@ def estimate_power_at_speed_kw(
         speed_exponent=speed_exponent,
         propulsion_multiplier=propulsion_multiplier,
     ).total_power_kw
+
+
+def sample_mission_sensor_power_kw(mission_type: str, rng: Any) -> float:
+    """Return sampled mission-mode onboard sensor/equipment power in kW."""
+    if mission_type in PAYLOAD_MISSIONS:
+        return float(rng.uniform(0.0, 25.0)) / 1000.0
+    if mission_type in ISR_MISSIONS:
+        return float(rng.uniform(50.0, 75.0)) / 1000.0
+    if mission_type in SEARCH_MISSIONS:
+        return float(rng.uniform(75.0, 150.0)) / 1000.0
+    return 0.0
+
+
+def deterministic_mission_sensor_power_kw(mission_type: str) -> float:
+    """Return midpoint mission-mode onboard sensor/equipment power in kW."""
+    if mission_type in PAYLOAD_MISSIONS:
+        return 0.0125
+    if mission_type in ISR_MISSIONS:
+        return 0.0625
+    if mission_type in SEARCH_MISSIONS:
+        return 0.1125
+    return 0.0
+
+
+def mission_sensor_power_basis(mission_type: str, enabled: bool = True) -> tuple[str, str]:
+    """Return active sensor mode and public-specification basis text."""
+    if not enabled:
+        return "Disabled", "Mission sensor-mode power sampling disabled."
+    if mission_type in PAYLOAD_MISSIONS:
+        return (
+            "Endurance / Transit",
+            "Uniform 0-25 W mission sensor-mode range for low-burden route/transit operation.",
+        )
+    if mission_type in ISR_MISSIONS:
+        return (
+            "ISR / Persistence",
+            "Uniform 50-75 W mission sensor-mode range for sensing, navigation, processing, communications, and persistence demand.",
+        )
+    if mission_type in SEARCH_MISSIONS:
+        return (
+            "Search/MCM / Area Search",
+            "Uniform 75-150 W mission sensor-mode range for active Search/MCM sensors, onboard processing, navigation support, and mission-equipment demand.",
+        )
+    return "None", "No mission sensor-mode range applies to this mission type."
 
 
 def payload_weight_energy_multiplier(
@@ -283,6 +334,51 @@ def compute_stockpile_requirement(
     }
 
 
+def compute_energy_recommendation_metrics(
+    energy_samples_kwh: np.ndarray | list[float],
+    validation_adjusted_energy_kwh: float | None = None,
+) -> dict[str, float | str | None]:
+    """Return recommendation-led energy metrics from Monte Carlo energy samples."""
+    samples = np.asarray(energy_samples_kwh, dtype=float)
+    samples = samples[np.isfinite(samples)]
+    upper_tail_fraction = 0.10
+    recommendation_basis = (
+        "Mean simulated energy plus one standard deviation; validation-adjusted value used only when provided. "
+        "Conservative stress estimate is the average of the upper 10% of Monte Carlo energy outcomes."
+    )
+    if samples.size == 0:
+        expected = 0.0
+        uncertainty = 0.0
+        conservative_stress = 0.0
+    else:
+        expected = float(np.mean(samples))
+        uncertainty = float(np.std(samples, ddof=1)) if samples.size > 1 else 0.0
+        sorted_samples = np.sort(samples)
+        tail_count = max(1, int(math.ceil(upper_tail_fraction * samples.size)))
+        conservative_stress = float(np.mean(sorted_samples[-tail_count:]))
+    distribution_recommended = expected + uncertainty
+    validation_adjusted = (
+        float(validation_adjusted_energy_kwh)
+        if validation_adjusted_energy_kwh is not None
+        else None
+    )
+    recommended = (
+        max(distribution_recommended, validation_adjusted)
+        if validation_adjusted is not None
+        else distribution_recommended
+    )
+    return {
+        "expected_energy_kwh": expected,
+        "energy_uncertainty_allowance_kwh": uncertainty,
+        "distribution_recommended_energy_kwh": distribution_recommended,
+        "validation_adjusted_energy_kwh": validation_adjusted,
+        "recommended_planning_energy_kwh": recommended,
+        "conservative_stress_energy_kwh": conservative_stress,
+        "upper_tail_fraction": upper_tail_fraction,
+        "recommendation_basis": recommendation_basis,
+    }
+
+
 def _isr_loop_coverage(endurance_hr: float, loop_time_hr: float, loop_distance_km: float) -> dict[str, float]:
     """Return full-loop, partial-loop, and patrol-distance coverage for an ISR endurance window."""
     if loop_time_hr <= 0 or loop_distance_km <= 0 or endurance_hr <= 0:
@@ -381,6 +477,9 @@ def run_energy_simulation(
     sustainment_planning_weeks: float = 4.0,
     sustainment_generator_efficiency: float = 0.84,
     payload_weight_kg: float = 0.0,
+    mission_sensor_power_enabled: bool = True,
+    validation_adjusted_energy_kwh: float | None = None,
+    deterministic_mode: bool = False,
 ) -> SimulationResult:
     """Run the single-UUV Monte Carlo mission energy model."""
     environment = environment or EnvironmentData()
@@ -388,7 +487,7 @@ def run_energy_simulation(
     if seed_used < 0:
         raise ValueError("rng_seed must be a non-negative integer")
     rng = np.random.default_rng(seed_used)
-    n = max(1, int(monte_carlo_runs))
+    n = 1 if deterministic_mode else max(1, int(monte_carlo_runs))
     mission_sequences = max(1, int(mission_sequences))
 
     current_mean = float(environment.current_speed_kts_mean if environment.current_speed_kts_mean is not None else 0.5)
@@ -404,8 +503,12 @@ def run_energy_simulation(
     input_speed_kts = max(float(speed_kts or vehicle.nominal_speed_kts), 0.1)
     input_power_breakdown = power_model_breakdown(vehicle, input_speed_kts)
     current_sigma_kts = 0.0 if current_mean <= 0.0 else max(0.02, 0.25 * current_mean)
-    sampled_current = np.clip(rng.normal(current_mean, current_sigma_kts, n), 0, None)
-    sampled_temp = rng.normal(temp_mean, 1.5, n)
+    sampled_current = (
+        np.full(n, max(current_mean, 0.0))
+        if deterministic_mode
+        else np.clip(rng.normal(current_mean, current_sigma_kts, n), 0, None)
+    )
+    sampled_temp = np.full(n, temp_mean) if deterministic_mode else rng.normal(temp_mean, 1.5, n)
     sampled_temperature_capacity_factor = np.array([lithium_temperature_capacity_factor(float(temp)) for temp in sampled_temp])
     sampled_battery_fraction = np.array(
         [
@@ -413,7 +516,7 @@ def run_energy_simulation(
                 rng,
                 condition=battery_condition,
                 deterministic_fraction=vehicle.usable_fraction,
-                stochastic_enabled=stochastic_usable_battery_enabled,
+                stochastic_enabled=stochastic_usable_battery_enabled and not deterministic_mode,
             )
             for _ in range(n)
         ]
@@ -438,6 +541,13 @@ def run_energy_simulation(
     hotel_power_samples_kw: list[float] = []
     propulsion_power_samples_kw: list[float] = []
     low_speed_penalty_samples_kw: list[float] = []
+    mission_sensor_power_samples_kw: list[float] = []
+    transit_sensor_power_samples_kw: list[float] = []
+    mission_sensor_energy_samples_kwh: list[float] = []
+    active_sensor_energy_samples_kwh: list[float] = []
+    transit_sensor_energy_samples_kwh: list[float] = []
+    active_sensor_duration_samples_hr: list[float] = []
+    total_active_power_samples_kw: list[float] = []
     speed_exponent_samples: list[float] = []
     hotel_fraction_samples: list[float] = []
     propulsion_multiplier_samples: list[float] = []
@@ -457,8 +567,33 @@ def run_energy_simulation(
         cur = float(sampled_current[index])
         temp = float(sampled_temp[index])
         usable_battery_sample = float(sampled_usable_battery_per_set[index])
-        sampled_power = sample_power_model_breakdown(vehicle, input_speed_kts, rng)
+        sampled_power = (
+            power_model_breakdown(vehicle, input_speed_kts)
+            if deterministic_mode
+            else sample_power_model_breakdown(vehicle, input_speed_kts, rng)
+        )
         active_power = sampled_power
+        sampled_mission_sensor_power_kw = (
+            deterministic_mission_sensor_power_kw(mission_type)
+            if deterministic_mode
+            else sample_mission_sensor_power_kw(mission_type, rng)
+        )
+        sampled_transit_sensor_power_kw = (
+            (
+                deterministic_mission_sensor_power_kw("Route / Transit")
+                if deterministic_mode
+                else sample_mission_sensor_power_kw("Route / Transit", rng)
+            )
+            if mission_type in SEARCH_MISSIONS
+            else sampled_mission_sensor_power_kw
+        )
+        mission_sensor_power_kw = sampled_mission_sensor_power_kw if mission_sensor_power_enabled else 0.0
+        transit_sensor_power_kw = sampled_transit_sensor_power_kw if mission_sensor_power_enabled else 0.0
+        mission_sensor_energy_kwh = 0.0
+        active_sensor_energy_kwh = 0.0
+        transit_sensor_energy_kwh = 0.0
+        active_sensor_duration_hr = 0.0
+        total_active_power_kw = active_power.total_power_kw + mission_sensor_power_kw
 
         if mission_type in PAYLOAD_MISSIONS:
             route_distance = float(area.route_distance_km or 10.0)
@@ -494,14 +629,23 @@ def run_energy_simulation(
                 low_speed_penalty_fraction=sampled_power.low_speed_penalty_fraction,
             )
             environmental_multiplier = environmental_uplift_factor(temp, current_penalty, salinity_penalty)
+            total_active_power_kw = active_power.total_power_kw + mission_sensor_power_kw
+            active_sensor_duration_hr = outbound_time + return_time + transit_time
             energy_single = (
-                ((outbound_power_kw * (outbound_time + transit_time)) + (return_power_kw * return_time)) * environmental_multiplier
+                (
+                    ((outbound_power_kw + mission_sensor_power_kw) * (outbound_time + transit_time))
+                    + ((return_power_kw + mission_sensor_power_kw) * return_time)
+                )
+                * environmental_multiplier
             ) + launch_recovery_energy
+            mission_sensor_energy_kwh = mission_sensor_power_kw * active_sensor_duration_hr * environmental_multiplier
+            active_sensor_energy_kwh = mission_sensor_energy_kwh
         elif mission_type in ISR_MISSIONS:
             endurance_speed_kts = input_speed_kts
             current_penalty = isr_current_power_penalty(cur, endurance_speed_kts)
             environmental_multiplier = environmental_uplift_factor(temp, current_penalty, salinity_penalty)
-            endurance_power_kw = sampled_power.total_power_kw
+            endurance_power_kw = sampled_power.total_power_kw + mission_sensor_power_kw
+            total_active_power_kw = endurance_power_kw
             persistence = compute_isr_persistence(
                 loop_distance_km=isr_loop_distance_km,
                 usable_energy_kwh=usable_battery_sample,
@@ -513,28 +657,47 @@ def run_energy_simulation(
             isr_persistence_results.append(persistence)
             energy_single = persistence.available_mission_energy_kwh
             duration_single = persistence.max_time_on_station_hr
+            active_sensor_duration_hr = duration_single
+            mission_sensor_energy_kwh = mission_sensor_power_kw * active_sensor_duration_hr * environmental_multiplier
+            active_sensor_energy_kwh = mission_sensor_energy_kwh
         else:
-            option_results: list[tuple[float, float, SearchPlan]] = []
+            option_results: list[tuple[float, float, float, float, SearchPlan]] = []
             for option in search_options:
-                distance = option.total_distance_km + additional_transit_km
-                base_duration = distance / max(input_speed_kts * 1.852, 0.1)
-                duration_candidate = base_duration * search_current_duration_multiplier(cur, current_dir, option.track_heading_deg, input_speed_kts)
-                duration_candidate += option.turns * 0.01
+                search_base_duration = option.total_distance_km / max(input_speed_kts * 1.852, 0.1)
+                search_duration = search_base_duration * search_current_duration_multiplier(cur, current_dir, option.track_heading_deg, input_speed_kts)
+                search_duration += option.turns * 0.01
+                transit_duration = additional_transit_km / max(input_speed_kts * 1.852, 0.1)
+                duration_candidate = search_duration + transit_duration
                 requested_power_kw = sampled_power.total_power_kw
-                energy_candidate = requested_power_kw * duration_candidate * (1 + salinity_penalty)
-                option_results.append((energy_candidate, duration_candidate, option))
+                energy_candidate = (
+                    ((requested_power_kw + mission_sensor_power_kw) * search_duration)
+                    + ((requested_power_kw + transit_sensor_power_kw) * transit_duration)
+                ) * (1 + salinity_penalty)
+                option_results.append((energy_candidate, duration_candidate, search_duration, transit_duration, option))
 
-            best_energy, best_duration, best_option = min(option_results, key=lambda item: item[0])
+            best_energy, best_duration, best_search_duration, best_transit_duration, best_option = min(option_results, key=lambda item: item[0])
             energy_single = best_energy
             duration_single = best_duration
+            total_active_power_kw = active_power.total_power_kw + mission_sensor_power_kw
+            active_sensor_duration_hr = best_search_duration
+            active_sensor_energy_kwh = mission_sensor_power_kw * best_search_duration * (1 + salinity_penalty)
+            transit_sensor_energy_kwh = transit_sensor_power_kw * best_transit_duration * (1 + salinity_penalty)
+            mission_sensor_energy_kwh = active_sensor_energy_kwh + transit_sensor_energy_kwh
             recommended_orientations.append(best_option.orientation)
 
         energies.append(energy_single * mission_sequences)
         durations.append(duration_single * mission_sequences)
-        power_samples_kw.append(active_power.total_power_kw)
+        power_samples_kw.append(total_active_power_kw)
         hotel_power_samples_kw.append(active_power.hotel_power_kw)
         propulsion_power_samples_kw.append(active_power.propulsion_power_kw)
         low_speed_penalty_samples_kw.append(active_power.low_speed_penalty_kw)
+        mission_sensor_power_samples_kw.append(mission_sensor_power_kw)
+        transit_sensor_power_samples_kw.append(transit_sensor_power_kw)
+        mission_sensor_energy_samples_kwh.append(mission_sensor_energy_kwh * mission_sequences)
+        active_sensor_energy_samples_kwh.append(active_sensor_energy_kwh * mission_sequences)
+        transit_sensor_energy_samples_kwh.append(transit_sensor_energy_kwh * mission_sequences)
+        active_sensor_duration_samples_hr.append(active_sensor_duration_hr * mission_sequences)
+        total_active_power_samples_kw.append(total_active_power_kw)
         speed_exponent_samples.append(active_power.speed_exponent)
         hotel_fraction_samples.append(active_power.hotel_fraction)
         propulsion_multiplier_samples.append(active_power.propulsion_multiplier)
@@ -546,6 +709,13 @@ def run_energy_simulation(
     hotel_power_arr = np.array(hotel_power_samples_kw)
     propulsion_power_arr = np.array(propulsion_power_samples_kw)
     low_speed_penalty_arr = np.array(low_speed_penalty_samples_kw)
+    mission_sensor_power_arr = np.array(mission_sensor_power_samples_kw)
+    transit_sensor_power_arr = np.array(transit_sensor_power_samples_kw)
+    mission_sensor_energy_arr = np.array(mission_sensor_energy_samples_kwh)
+    active_sensor_energy_arr = np.array(active_sensor_energy_samples_kwh)
+    transit_sensor_energy_arr = np.array(transit_sensor_energy_samples_kwh)
+    active_sensor_duration_arr = np.array(active_sensor_duration_samples_hr)
+    total_active_power_arr = np.array(total_active_power_samples_kw)
     speed_exponent_arr = np.array(speed_exponent_samples)
     hotel_fraction_arr = np.array(hotel_fraction_samples)
     propulsion_multiplier_arr = np.array(propulsion_multiplier_samples)
@@ -554,15 +724,26 @@ def run_energy_simulation(
     p80 = float(np.percentile(energy_arr, 80))
     p95 = float(np.percentile(energy_arr, 95))
     mean_energy = float(np.mean(energy_arr))
+    recommendation_metrics = compute_energy_recommendation_metrics(
+        energy_arr,
+        validation_adjusted_energy_kwh=validation_adjusted_energy_kwh,
+    )
+    expected_energy = float(recommendation_metrics["expected_energy_kwh"] or 0.0)
+    recommended_planning_energy = float(recommendation_metrics["recommended_planning_energy_kwh"] or 0.0)
+    conservative_stress_energy = float(recommendation_metrics["conservative_stress_energy_kwh"] or 0.0)
     mean_duration = float(np.mean(duration_arr))
     available_inventory_samples = sampled_usable_battery_per_set * max(1, battery_sets_available)
     inventory_probability = float(np.mean(energy_arr <= available_inventory_samples) * 100.0)
+    battery_sets_required_recommended = max(1, math.ceil(recommended_planning_energy / max(usable_battery_per_set, 0.001)))
+    battery_sets_required_stress = max(1, math.ceil(conservative_stress_energy / max(usable_battery_per_set, 0.001)))
     battery_sets_required_p80 = max(1, math.ceil(p80 / max(usable_battery_per_set, 0.001)))
     battery_sets_required_p95 = max(1, math.ceil(p95 / max(usable_battery_per_set, 0.001)))
+    battery_shortfall_recommended = max(0, battery_sets_required_recommended - max(1, battery_sets_available))
+    battery_shortfall_stress = max(0, battery_sets_required_stress - max(1, battery_sets_available))
     battery_shortfall = max(0, battery_sets_required_p80 - max(1, battery_sets_available))
     battery_shortfall_p95 = max(0, battery_sets_required_p95 - max(1, battery_sets_available))
     effective_recharge_allowed = bool(recharge_allowed) and is_vehicle_rechargeable(vehicle)
-    recharge_sequences_required = battery_shortfall if effective_recharge_allowed else 0
+    recharge_sequences_required = battery_shortfall_recommended if effective_recharge_allowed else 0
     recharge_downtime_hr = recharge_sequences_required * vehicle.recharge_hr
     orientation_summary = "N/A"
     if mission_type in SEARCH_MISSIONS and recommended_orientations:
@@ -577,6 +758,8 @@ def run_energy_simulation(
             "search_track_distance_km": selected_search_plan.track_distance_km,
             "search_turn_distance_km": selected_search_plan.turn_distance_km,
             "search_total_distance_km": selected_search_plan.total_distance_km + additional_transit_km,
+            "search_active_survey_distance_km": selected_search_plan.total_distance_km,
+            "search_additional_transit_distance_km": max(float(additional_transit_km or 0.0), 0.0),
             "search_lane_count": selected_search_plan.lanes,
         }
     isr_summary: dict[str, object] = {}
@@ -667,12 +850,12 @@ def run_energy_simulation(
 
     if mission_type in ISR_MISSIONS:
         planning_energy_basis = "mission_total"
-        planning_energy_kwh = p95
+        planning_energy_kwh = recommended_planning_energy
         planning_duration_basis = "endurance_window"
         planning_duration_hr = float(isr_summary.get("isr_single_set_endurance_hr", mean_duration))
     else:
         planning_energy_basis = "mission_total"
-        planning_energy_kwh = p95
+        planning_energy_kwh = recommended_planning_energy
         planning_duration_basis = "mission_duration"
         planning_duration_hr = mean_duration
 
@@ -685,7 +868,7 @@ def run_energy_simulation(
         generator_efficiency=sustainment_generator_efficiency,
     )
     recharge_feasibility = recharge_feasibility_lens(
-        p95_energy_kwh=p95,
+        p95_energy_kwh=recommended_planning_energy,
         mission_duration_hr=mean_duration,
         usable_battery_per_set_kwh=usable_battery_per_set,
         battery_sets_available=max(1, battery_sets_available),
@@ -694,26 +877,40 @@ def run_energy_simulation(
         recoverable=is_vehicle_recoverable(vehicle),
         recharge_allowed=bool(recharge_allowed),
     )
+    active_sensor_mode, sensor_power_basis = mission_sensor_power_basis(
+        mission_type,
+        enabled=bool(mission_sensor_power_enabled),
+    )
 
     summary = {
         "platform": vehicle.name,
         "mission_type": mission_type,
         "mean_energy_kwh": mean_energy,
+        **recommendation_metrics,
         "p50_energy_kwh": p50,
         "p80_energy_kwh": p80,
         "p95_energy_kwh": p95,
         "planning_energy_basis": planning_energy_basis,
-        "planning_percentile": "P95",
+        "planning_percentile": "recommendation",
         "planning_energy_kwh": planning_energy_kwh,
+        "conservative_energy_kwh": conservative_stress_energy,
         "planning_duration_basis": planning_duration_basis,
         "planning_duration_hr": planning_duration_hr,
         "mean_duration_hr": mean_duration,
         "elapsed_with_recharge_hr": mean_duration + recharge_downtime_hr,
         "inventory_sufficiency_probability_pct": inventory_probability,
-        "battery_inventory_sufficient_no_recharge": battery_shortfall == 0,
+        "battery_inventory_sufficient_no_recharge": battery_shortfall_recommended == 0,
+        "battery_inventory_sufficient_recommended": battery_shortfall_recommended == 0,
+        "battery_inventory_sufficient_stress": battery_shortfall_stress == 0,
+        "battery_sets_required_recommended": battery_sets_required_recommended,
+        "battery_sets_required_recommended_planning": battery_sets_required_recommended,
+        "battery_sets_required_stress": battery_sets_required_stress,
+        "battery_sets_required_conservative_stress": battery_sets_required_stress,
         "battery_sets_required_p80": battery_sets_required_p80,
         "battery_sets_required_p95": battery_sets_required_p95,
         "battery_sets_available": max(1, battery_sets_available),
+        "battery_shortfall_recommended": battery_shortfall_recommended,
+        "battery_shortfall_stress": battery_shortfall_stress,
         "battery_shortfall_p80": battery_shortfall,
         "battery_shortfall_p95": battery_shortfall_p95,
         "recharge_sequences_required": recharge_sequences_required,
@@ -723,7 +920,7 @@ def run_energy_simulation(
         "vehicle_recharge_hr": vehicle.recharge_hr,
         "payload_recovery_mode": recovery_mode if mission_type in PAYLOAD_MISSIONS else "not_applicable",
         "payload_one_way_catalog_note": (
-            "Vehicle catalog marks this platform as one-way/non-rechargeable; payload planning uses one-way route energy."
+            "Vehicle catalog marks this platform as one-way/non-rechargeable; route/transit planning uses one-way route energy."
             if mission_type in PAYLOAD_MISSIONS and recovery_mode == "one_way" and (vehicle.recoverable is False or not is_vehicle_rechargeable(vehicle))
             else ""
         ),
@@ -761,6 +958,32 @@ def run_energy_simulation(
         "low_speed_penalty_kw": input_power_breakdown.low_speed_penalty_kw,
         "hotel_power_fraction": input_power_breakdown.hotel_fraction,
         "min_efficient_speed_kts": input_power_breakdown.min_efficient_speed_kts,
+        "mission_sensor_power_enabled": bool(mission_sensor_power_enabled),
+        "mission_sensor_power_mean_kw": float(np.mean(mission_sensor_power_arr)),
+        "mission_sensor_power_p10_kw": float(np.percentile(mission_sensor_power_arr, 10)),
+        "mission_sensor_power_p50_kw": float(np.percentile(mission_sensor_power_arr, 50)),
+        "mission_sensor_power_p90_kw": float(np.percentile(mission_sensor_power_arr, 90)),
+        "mission_sensor_power_mean_w": float(np.mean(mission_sensor_power_arr) * 1000.0),
+        "mission_sensor_power_p10_w": float(np.percentile(mission_sensor_power_arr, 10) * 1000.0),
+        "mission_sensor_power_p50_w": float(np.percentile(mission_sensor_power_arr, 50) * 1000.0),
+        "mission_sensor_power_p90_w": float(np.percentile(mission_sensor_power_arr, 90) * 1000.0),
+        "mission_sensor_power_range_kw": f"{float(np.min(mission_sensor_power_arr)):.3f}-{float(np.max(mission_sensor_power_arr)):.3f}",
+        "mission_sensor_power_basis": sensor_power_basis,
+        "active_sensor_mode": active_sensor_mode,
+        "active_sensor_duration_mean_hr": float(np.mean(active_sensor_duration_arr)),
+        "mission_sensor_energy_mean_kwh": float(np.mean(mission_sensor_energy_arr)),
+        "mission_sensor_energy_p50_kwh": float(np.percentile(active_sensor_energy_arr, 50)),
+        "mission_sensor_total_energy_p50_kwh": float(np.percentile(mission_sensor_energy_arr, 50)),
+        "transit_sensor_energy_p50_kwh": float(np.percentile(transit_sensor_energy_arr, 50)),
+        "search_active_survey_duration_mean_hr": float(np.mean(active_sensor_duration_arr)) if mission_type in SEARCH_MISSIONS else 0.0,
+        "search_additional_transit_duration_mean_hr": max(float(np.mean(duration_arr) - np.mean(active_sensor_duration_arr)), 0.0) if mission_type in SEARCH_MISSIONS else 0.0,
+        "transit_sensor_power_mean_kw": float(np.mean(transit_sensor_power_arr)),
+        "transit_sensor_power_p50_kw": float(np.percentile(transit_sensor_power_arr, 50)),
+        "transit_sensor_power_mean_w": float(np.mean(transit_sensor_power_arr) * 1000.0),
+        "transit_sensor_power_p50_w": float(np.percentile(transit_sensor_power_arr, 50) * 1000.0),
+        "total_active_power_mean_kw": float(np.mean(total_active_power_arr)),
+        "total_active_power_p50_kw": float(np.percentile(total_active_power_arr, 50)),
+        "vehicle_speed_power_p50_kw": float(np.percentile(total_active_power_arr - mission_sensor_power_arr, 50)),
         "power_draw_mean_kw": float(np.mean(power_arr)),
         "power_draw_p10_kw": float(np.percentile(power_arr, 10)),
         "power_draw_p50_kw": float(np.percentile(power_arr, 50)),
@@ -786,6 +1009,8 @@ def run_energy_simulation(
         "payload_weight_penalty_basis": payload_weight_basis if mission_type in PAYLOAD_MISSIONS else "Not applicable to this mission type.",
         "payload_weight_basis": payload_weight_basis if mission_type in PAYLOAD_MISSIONS else "Not applicable to this mission type.",
         "reserve_margin_per_set_kwh": max(vehicle.battery_kwh - usable_battery_per_set, 0.0),
+        "battery_remaining_pct_recommended": max(0.0, min(100.0, 100.0 * (1.0 - recommended_planning_energy / max(total_available_kwh, 0.001)))),
+        "battery_remaining_pct_stress": max(0.0, min(100.0, 100.0 * (1.0 - conservative_stress_energy / max(total_available_kwh, 0.001)))),
         "battery_remaining_pct_p80": max(0.0, min(100.0, 100.0 * (1.0 - p80 / max(total_available_kwh, 0.001)))),
         **{f"sustainment_{key}": value for key, value in sustainment_projection.items()},
         **recharge_feasibility,
@@ -803,10 +1028,13 @@ def run_energy_simulation(
         ("Platform", vehicle.name, ""),
         ("Mission type", mission_type, ""),
         ("Mission sequences", mission_sequences, "runs"),
-        ("Mean energy required", mean_energy, "kWh"),
-        ("P50 energy required", p50, "kWh"),
-        ("P80 energy required", p80, "kWh"),
-        ("P95 energy required", p95, "kWh"),
+        ("Expected mission energy", expected_energy, "kWh"),
+        ("Modeled uncertainty allowance", recommendation_metrics["energy_uncertainty_allowance_kwh"], "kWh"),
+        ("Recommended planning energy", recommended_planning_energy, "kWh"),
+        ("Conservative stress estimate", conservative_stress_energy, "kWh"),
+        ("Technical P50 energy required", p50, "kWh"),
+        ("Technical P80 energy required", p80, "kWh"),
+        ("Technical P95 energy required", p95, "kWh"),
         ("Mean mission duration", mean_duration, "hr"),
         ("Battery nameplate capacity", vehicle.battery_kwh, "kWh"),
         ("Usable planning energy per vehicle unit" if one_way_inventory else "Usable planning energy per set", usable_battery_per_set, "kWh"),
@@ -815,20 +1043,39 @@ def run_energy_simulation(
         ("Operator reserve fraction", reserve_fraction, ""),
         ("Usable battery basis", vehicle.usable_basis, ""),
         ("Nominal average power", input_power_breakdown.nominal_power_kw, "kW"),
-        ("Speed-adjusted power draw", input_power_breakdown.total_power_kw, "kW"),
+        ("Speed-adjusted vehicle power", input_power_breakdown.total_power_kw, "kW"),
         ("Hotel power component", input_power_breakdown.hotel_power_kw, "kW"),
         ("Propulsion power component", input_power_breakdown.propulsion_power_kw, "kW"),
         ("Low-speed power correction", input_power_breakdown.low_speed_penalty_kw, "kW"),
-        ("Payload weight", max(float(payload_weight_kg or 0.0), 0.0), "kg"),
-        ("Payload carriage penalty", payload_penalty_pct if mission_type in PAYLOAD_MISSIONS else 0.0, "%"),
-        ("Payload propulsion penalty multiplier", payload_propulsion_multiplier if mission_type in PAYLOAD_MISSIONS else 1.0, ""),
+        ("Mission sensor-mode power, P50", summary["mission_sensor_power_p50_w"], "W"),
+        (
+            "Mission sensor-mode power range",
+            f"{summary['mission_sensor_power_p10_w']:.0f}-{summary['mission_sensor_power_p90_w']:.0f}",
+            "W P10-P90",
+        ),
+        ("Mission sensor active duration", summary["active_sensor_duration_mean_hr"], "hr"),
+        ("Mission sensor-mode energy P50", summary["mission_sensor_energy_p50_kwh"], "kWh"),
+        ("Transit sensor-mode energy P50", summary["transit_sensor_energy_p50_kwh"], "kWh"),
+        ("Mission sensor-mode basis", summary["mission_sensor_power_basis"], ""),
+        (
+            "Search/MCM segment logic",
+            "Active search/survey receives Search/MCM sensor-mode power; added transit receives Route/Transit sensor-mode power."
+            if mission_type in SEARCH_MISSIONS
+            else "",
+            "",
+        ),
+        ("Carried equipment weight", max(float(payload_weight_kg or 0.0), 0.0), "kg"),
+        ("Equipment carriage penalty", payload_penalty_pct if mission_type in PAYLOAD_MISSIONS else 0.0, "%"),
+        ("Equipment propulsion penalty multiplier", payload_propulsion_multiplier if mission_type in PAYLOAD_MISSIONS else 1.0, ""),
         ("Launch/recovery overhead", launch_recovery_energy if mission_type in PAYLOAD_MISSIONS else 0.0, "kWh"),
         ("Vehicle units on hand" if one_way_inventory else "Battery sets on hand", battery_sets_available, inventory_unit_plural),
-        ("Vehicle inventory sufficiency" if one_way_inventory else "Battery inventory without recharge", "Sufficient" if battery_shortfall == 0 else "Not sufficient", ""),
+        ("Vehicle inventory sufficiency" if one_way_inventory else "Battery inventory without recharge", "Sufficient" if battery_shortfall_recommended == 0 else "Not sufficient", ""),
         ("Vehicle inventory sufficiency across Monte Carlo runs" if one_way_inventory else "Battery inventory sufficiency across Monte Carlo runs", inventory_probability, "%"),
-        ("Vehicle units required at P80" if one_way_inventory else "Battery sets required at P80", battery_sets_required_p80, inventory_unit_plural),
-        ("Vehicle inventory shortfall at P80" if one_way_inventory else "Battery shortfall at P80", battery_shortfall, inventory_unit_plural),
-        ("Replacement inventory units required" if one_way_inventory else "Recharge / swap sequences required", battery_shortfall if one_way_inventory else recharge_sequences_required, inventory_unit_plural if one_way_inventory else "sequences"),
+        ("Vehicle units required for recommended planning energy" if one_way_inventory else "Battery sets required for recommended planning energy", battery_sets_required_recommended, inventory_unit_plural),
+        ("Vehicle units required for conservative stress estimate" if one_way_inventory else "Battery sets required for conservative stress estimate", battery_sets_required_stress, inventory_unit_plural),
+        ("Vehicle inventory shortfall for recommended planning energy" if one_way_inventory else "Battery shortfall for recommended planning energy", battery_shortfall_recommended, inventory_unit_plural),
+        ("Vehicle inventory shortfall for conservative stress estimate" if one_way_inventory else "Battery shortfall for conservative stress estimate", battery_shortfall_stress, inventory_unit_plural),
+        ("Replacement inventory units required" if one_way_inventory else "Recharge / swap sequences required", battery_shortfall_recommended if one_way_inventory else recharge_sequences_required, inventory_unit_plural if one_way_inventory else "sequences"),
         ("Replacement inventory planning delay" if one_way_inventory else "Recharge downtime", 0.0 if one_way_inventory else recharge_downtime_hr, "hr"),
         ("Elapsed mission time" if one_way_inventory else "Elapsed time incl. recharge", mean_duration if one_way_inventory else mean_duration + recharge_downtime_hr, "hr"),
     ]
@@ -878,4 +1125,11 @@ def run_energy_simulation(
         hotel_power_samples_kw=hotel_power_arr,
         propulsion_power_samples_kw=propulsion_power_arr,
         low_speed_penalty_samples_kw=low_speed_penalty_arr,
+        mission_sensor_power_samples_kw=mission_sensor_power_arr,
+        transit_sensor_power_samples_kw=transit_sensor_power_arr,
+        mission_sensor_energy_samples_kwh=mission_sensor_energy_arr,
+        active_sensor_energy_samples_kwh=active_sensor_energy_arr,
+        transit_sensor_energy_samples_kwh=transit_sensor_energy_arr,
+        active_sensor_duration_samples_hr=active_sensor_duration_arr,
+        total_active_power_samples_kw=total_active_power_arr,
     )

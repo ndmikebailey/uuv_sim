@@ -35,7 +35,7 @@ Source basis: local project files and `UUV Project file Notes.md`. This board is
 
 | Item | Implementation state | Next development action |
 | --- | --- | --- |
-| Release labeling and manual UI review | Code constants and primary docs use the v3.5 beta label; manual UI testing remains a team-testing activity. | Confirm visible build label, report language, and tab-navigation text during manual UI testing. |
+| Release labeling and manual UI review | Code constants and primary docs use the v4 beta label; manual UI testing remains a team-testing activity. | Confirm visible build label, report language, and tab-navigation text during manual UI testing. |
 
 ## Next
 
@@ -184,7 +184,7 @@ Implementation tasks:
 - Surface `compute_sustainment_projection()` output in the Results tab.
 - Parameterize hotel fraction by vehicle or configuration while preserving the `0.40` planning default. Complete.
 - Add one-way/non-rechargeable report wording for catalog entries with `recharge_hr = 0.0`. Complete.
-- Confirm v3.5 beta release labels during manual UI review.
+- Confirm v4 beta release labels during manual UI review.
 
 Exit criteria:
 

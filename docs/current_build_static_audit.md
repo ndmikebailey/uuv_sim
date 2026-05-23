@@ -10,11 +10,11 @@ Scope: static source review and documentation support for manual testing and lat
 - Active Gradio application module: `app/main.py`
 - Current git branch observed during static review: `Alpha/3.5-Beta-Release`
 - Application name from constants: `UUV Mission Planning and Energy Simulator`
-- App version from constants: `v3.5-beta`
-- Energy model version from constants: `energy_model_v3_5_beta`
-- Vehicle catalog version from constants: `vehicle_catalog_v3_5_public_baseline`
+- App version from constants: `v4-beta`
+- Energy model version from constants: `energy_model_v4_beta`
+- Vehicle catalog version from constants: `vehicle_catalog_v4_public_baseline`
 
-Note: constants now use the v3.5 beta label for team testing. This is still a planning tool pending manual UI review and V&V.
+Note: constants now use the v4 beta label for team testing. This is still a planning tool pending manual UI review and V&V.
 
 ## Major Modules And Responsibilities
 

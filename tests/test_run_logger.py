@@ -116,7 +116,7 @@ class RunLoggerTests(unittest.TestCase):
         self.assertEqual(row["salinity_uplift_pct"], "0.6")
         self.assertEqual(row["weather_summary"], "Clear")
         self.assertEqual(row["battery_inventory_sufficient"], "Yes")
-        self.assertIn("Payload energy", row["planner_note"])
+        self.assertIn("Route/transit energy", row["planner_note"])
 
 
 if __name__ == "__main__":

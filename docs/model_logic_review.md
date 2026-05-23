@@ -37,11 +37,13 @@ The `VehicleState` loader expects the active catalog to match the dataclass sche
 
 ## Mission-Specific Energy Logic
 
-### Payload
+### Route / Transit
 
-Payload Delivery uses route distance, optional return-to-start, additional transit distance, selected speed, current direction, current speed, and temperature burden.
+The user-facing route mode is now `Route / Transit`. Internally, the model still accepts legacy `Payload`, `Payload Delivery`, and `Delivery` labels through `PAYLOAD_MISSIONS` for compatibility with older tests, run records, and saved contexts.
 
-Energy is based on duration multiplied by speed-adjusted vehicle power, then adjusted by environmental uplift. Return-to-start adds a return leg using reciprocal heading.
+Route / Transit uses route distance, optional return-to-start, additional transit distance, selected speed, current direction, current speed, the low Route / Transit sensor-mode range, salinity burden when available, and battery temperature capacity derating.
+
+Energy is based on duration multiplied by speed-adjusted vehicle power plus the sampled low sensor-mode term, then adjusted by environmental uplift. Return-to-start adds a return leg using reciprocal heading.
 
 Planning basis:
 
@@ -50,7 +52,7 @@ Planning basis:
 
 ### ISR
 
-ISR uses a patrol loop distance derived from line out-and-back, polygon perimeter, or rectangle perimeter geometry. The model estimates endurance at the selected patrol speed, adjusted by speed-power and environmental burden.
+ISR uses a patrol loop distance derived from line out-and-back, polygon perimeter, or rectangle perimeter geometry. The model estimates endurance at the selected patrol speed, adjusted by speed-power, environmental burden, and the sampled ISR sensor-mode power term.
 
 ISR reporting distinguishes:
 
@@ -68,7 +70,9 @@ Planning basis:
 
 ### Search/MCM
 
-Search/MCM uses search area geometry, track spacing, global mission speed, current burden, temperature burden, and recommended track orientation. The model evaluates north-south and east-west search plans and selects the lower-energy option.
+Search/MCM uses search area geometry, track spacing, global mission speed, current burden, salinity burden when available, battery temperature capacity derating, sampled mission sensor-mode power, and recommended track orientation. The model evaluates north-south and east-west search plans and selects the lower-energy option.
+
+Search/MCM energy is segment-aware. Active search/survey time carries the Search/MCM sensor-mode range, while additional transit distance uses the low Route / Transit sensor-mode range rather than the full active survey load.
 
 For multi-area Search/MCM, selected areas are represented as a `MissionAreaSet`. The current energy path uses an aggregate equivalent search area so existing Search/MCM energy logic remains compatible. This is a planning simplification and should be revisited if per-area lane rendering becomes a thesis focus.
 
@@ -85,20 +89,62 @@ The model estimates power at requested speed with:
 - speed-dependent propulsion load
 - cubic propulsion scaling by default
 
-The calibrated helper is `power_model_breakdown()` in `core/power.py`, with `estimate_power_at_speed_kw()` in `core/energy.py` retained as the v3.5 compatibility wrapper for payload propulsion multipliers. It prevents the model from making higher speeds appear too efficient simply because duration decreases while average power remains fixed.
+The calibrated helper is `power_model_breakdown()` in `core/power.py`, with `estimate_power_at_speed_kw()` in `core/energy.py` retained as the v3.5 compatibility wrapper for carried-equipment propulsion multipliers. It prevents the model from making higher speeds appear too efficient simply because duration decreases while average power remains fixed.
 
 The assumptions are traceable in `core/assumptions.py`:
 
 - `default_hotel_load_fraction`
 - `propulsion_speed_exponent`
 
-Current implementation detail: the default hotel power fraction is `0.40`, with `0.60` of baseline power treated as propulsion at nominal speed. Vehicle catalog entries may optionally provide `hotel_fraction` or `hotel_power_fraction`; when present, the catalog value overrides the default and is clamped to 0.20-0.80. Low-speed behavior is bounded by `min_efficient_speed = 0.65 * nominal_speed`, `low_speed_penalty_fraction = 0.15`, and `low_speed_penalty_cap_fraction = 0.10`.
+Current implementation detail: the default hotel power fraction is `0.40`, with `0.60` of baseline power treated as propulsion at nominal speed. Vehicle catalog entries may optionally provide `hotel_fraction` or `hotel_power_fraction`; when present, the catalog value overrides the default and is clamped to 0.25-0.60. Low-speed behavior is bounded by `min_efficient_speed = 0.65 * nominal_speed`, `low_speed_penalty_fraction = 0.15`, and `low_speed_penalty_cap_fraction = 0.10`.
 
 The project-note hydrodynamic cylinder equations are methodology cross-check equations, not active simulation equations. The implementation remains a weighted operational planning model.
 
+## Mission Sensor-Mode Power
+
+The active model adds a Monte Carlo sampled mission sensor-mode term to the existing vehicle speed-power model. It does not replace hotel load, propulsion scaling, or low-speed correction.
+
+Current model concept:
+
+```text
+P_vehicle_speed = P_hotel + P_propulsion + P_low_speed
+P_active = P_vehicle_speed + P_sensor_mode
+```
+
+Mission sensor-mode ranges are implemented in `sample_mission_sensor_power_kw()`:
+
+- Route / Transit and legacy Payload labels: `Uniform(0 W, 25 W)`
+- ISR / Persistence: `Uniform(50 W, 75 W)`
+- Search/MCM / Area Search: `Uniform(75 W, 150 W)`
+
+Segment equations:
+
+```text
+E_transit = (P_vehicle_speed + P_transit_sensor_mode) * T_transit
+E_mission_active = (P_vehicle_speed + P_active_sensor_mode) * T_active
+E_total = E_transit + E_mission_active
+```
+
+For Search/MCM, `T_active` is the active search/survey duration from the selected lane plan, including turn burden. Additional transit is modeled separately and receives the low Route / Transit sensor range. For ISR, the ISR sensor range is applied across the patrol/on-station endurance window. For Route / Transit, the low sensor range is applied across the moving route duration.
+
+The summary/report exposes:
+
+- `mission_sensor_power_mean_kw`
+- `mission_sensor_power_p10_kw`
+- `mission_sensor_power_p50_kw`
+- `mission_sensor_power_p90_kw`
+- `mission_sensor_power_basis`
+- `active_sensor_mode`
+- `active_sensor_duration_mean_hr`
+- `mission_sensor_energy_mean_kwh`
+- `transit_sensor_power_mean_kw`
+- `total_active_power_p50_kw`
+
+The basis is also registered in `core/assumptions.py` under `mission_sensor_mode_power_ranges`.
+
 ## Current Direction And METOC Burden
 
-Current is decomposed relative to mission heading where needed. Payload uses route heading and return heading. Search/MCM uses track heading. ISR applies a modest station-keeping/current burden relative to endurance speed.
+Current is decomposed relative to mission heading where needed. Route / Transit uses route heading and return heading. Search/MCM uses track heading. ISR applies a modest station-keeping/current burden relative to endurance speed.
 
 Multi-area Search/MCM uses one METOC lookup per area centroid. Current is vector averaged rather than angle averaged:
 
@@ -113,18 +159,18 @@ Salinity is carried as `sea_surface_salinity_psu` when available from NOAA CO-OP
 
 NOAA CO-OPS station salinity is only valid where a relevant station exists near the mission area and returns a salinity product. NOAA WOA23 is climatological/historical, not live tactical METOC. Standard seawater fallback is used when station/grid data is unavailable. Copernicus was evaluated during development and removed from the active v3.5 salinity chain. HYCOM/GOFS, SMAP, and Argo remain future enhancement or V&V sources only. Salinity and density inputs are planning modifiers only and are not tactical oceanographic authority.
 
-## Payload Mass Burden
+## Carried Equipment Mass Burden
 
-Payload Delivery supports an optional payload weight input. The empirical planning multiplier is:
+Route / Transit supports an optional carried equipment weight input. The legacy summary fields retain `payload_weight_*` names for compatibility, but the UI/report language uses carried equipment rather than kinetic-delivery payload. The empirical planning multiplier is:
 
 ```text
 penalty_pct = (payload_weight_kg / vehicle_energy_kwh) * 0.30
 weight_penalty_multiplier = 1.0 + min(5.0, max(0.0, penalty_pct)) / 100.0
 ```
 
-The multiplier applies to outbound propulsion power only, not fixed hotel load. Payload burden does not rely on public dry-weight data; payload mass is treated as a bounded trim/integration planning penalty scaled against vehicle energy class because payload weight alone is not a direct hydrodynamic drag variable. Payload-specific drag modeling is future work if area, Cd, mounting, buoyancy, and trim data become available. For return-to-start payload missions, outbound and added transit burden carry the payload while the return leg is unburdened. One-way mode uses outbound route energy only. Search/MCM and ISR ignore payload weight.
+The multiplier applies to outbound propulsion power only, not fixed hotel load. The carried-equipment burden does not rely on public dry-weight data; equipment mass is treated as a bounded trim/integration planning penalty scaled against vehicle energy class because weight alone is not a direct hydrodynamic drag variable. Equipment-specific drag modeling is future work if area, Cd, mounting, buoyancy, and trim data become available. For return-to-start route missions, outbound and added transit burden carry the equipment while the return leg is unburdened. One-way mode uses outbound route energy only. Search/MCM and ISR ignore carried equipment weight.
 
-Recoverable payload missions include a small launch/recovery overhead using `0.25 hr * 0.5 * average_power_kw`. One-way/non-recoverable catalog entries do not receive that overhead and use clean one-way/non-rechargeable report wording. Sprint/hibernate/deploy payload phasing remains deferred.
+Recoverable Route / Transit missions include a small launch/recovery overhead using `0.25 hr * 0.5 * average_power_kw`. One-way/non-recoverable catalog entries do not receive that overhead and use clean one-way/non-rechargeable report wording. Sprint/hibernate/deploy phasing remains deferred.
 
 ## Battery Inventory And Reserve Logic
 
@@ -138,11 +184,11 @@ Temperature derating uses the named `lithium_temperature_capacity_derating_v1` c
 
 The original temperature derating rule captured the correct degradation direction but capped severe cold at 25 percent. After comparison with Bressan-style LiFePO4 capacity-loss anchors, the model was updated to a table-driven derating curve that preserves the no-penalty operating band while aligning the cold-side planning penalty with experimental capacity-loss evidence.
 
-Battery inventory is represented by the number of battery sets available. For ISR, reporting separates one installed set from total available inventory. For Payload and Search/MCM, reports focus on mission-total energy, battery sets required, and shortfall.
+Battery inventory is represented by the number of battery sets available. For ISR, reporting separates one installed set from total available inventory. For Route / Transit and Search/MCM, reports focus on mission-total energy, battery sets required, and shortfall.
 
 ## Monte Carlo Uncertainty Interpretation
 
-The model samples current, temperature capacity factor, and usable battery fraction around selected or loaded planning assumptions. Output percentiles are:
+The model samples current, temperature capacity factor, usable battery fraction, vehicle speed-power parameters, and mission sensor-mode power around selected or loaded planning assumptions. Output percentiles are:
 
 - P50: expected estimate
 - P80: planning-level estimate
@@ -158,7 +204,7 @@ The Sustainment Projection Lens is an energy-flow planning lens, not a fleet opt
 
 ### mission_total
 
-`mission_total` means planning energy is the energy required for the whole modeled mission instance. Payload and Search/MCM use this basis.
+`mission_total` means planning energy is the energy required for the whole modeled mission instance. Route / Transit, Search/MCM, and ISR all use this energy basis. ISR differs in that its duration basis is the endurance window.
 
 ### patrol_loop
 
@@ -172,10 +218,9 @@ The Sustainment Projection Lens is an energy-flow planning lens, not a fleet opt
 
 - See `docs/implementation_kanban.md` for the current implementation-only development board.
 - See `docs/current_logic_and_equations.md` for the compact equation and current-logic reference.
-- Add payload weight input and mass penalty multiplier.
-- Add optional launch/recovery energy tax for recoverable missions.
-- Add hibernate/sprint phase logic for payload missions that require long loiter periods.
+- Add vehicle-specific mission sensor-mode overrides if public platform configuration data supports them.
+- Add hibernate/sprint phase logic for route/transit missions that require long loiter periods.
 - Improve per-area Search/MCM lane rendering instead of aggregate equivalent area only.
 - Add contested-delay/loiter interruption model.
 - Expand thesis documentation with assumption provenance, validation scenarios, and sensitivity analysis.
-- Confirm v3.5 beta app, energy model, and vehicle catalog version labels during manual release review.
+- Confirm v4 beta app, energy model, and vehicle catalog version labels during manual release review.

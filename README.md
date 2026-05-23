@@ -11,15 +11,15 @@ pinned: false
 ---
 # UUV Mission Planning and Energy Simulator
 
-`v3.5-beta` is a Gradio-based research tool for planning single-UUV missions, estimating energy requirements, and reviewing mission geometry with METOC context.
+`v4-beta` is a Gradio-based research tool for planning single-UUV missions, estimating energy requirements, and reviewing mission geometry with METOC context.
 
 ## Status
 
 This repository is an academic research artifact. It is intended for controlled dry runs, early physical-test planning, and model-development review. It is not an operational navigation, safety, or tactical decision tool.
 
-## v3.5-beta Highlights
+## v4-beta Highlights
 
-The v3.5-beta release candidate includes the Mission Builder, Single-UUV Simulator, and Results workflow for Payload, ISR, and Search/MCM mission modes; GPS mission map overlays with engineering snapshots; the NOAA CO-OPS / NOAA WOA23 / standard seawater salinity chain; recharge feasibility and fuel-equivalent sustainment lenses; one-way/non-rechargeable vehicle inventory wording; and report decision brief plus technical traceability sections.
+The v4-beta release candidate includes the Mission Builder, Single-UUV Simulator, and Results workflow for Route/Transit, ISR, and Search/MCM mission modes; GPS mission map overlays with engineering snapshots; the NOAA CO-OPS / NOAA WOA23 / standard seawater salinity chain; recharge feasibility and fuel-equivalent sustainment lenses; one-way/non-rechargeable vehicle inventory wording; and report decision brief plus technical traceability sections.
 
 ## Run Locally
 

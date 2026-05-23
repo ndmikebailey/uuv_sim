@@ -51,12 +51,43 @@ speed_exponent = 3.0
 min_efficient_speed = 0.65 * nominal_speed
 low_speed_penalty_fraction = 0.15
 low_speed_penalty_cap_fraction = 0.10
-catalog hotel_fraction / hotel_power_fraction override: optional, clamped to 0.20-0.80
+catalog hotel_fraction / hotel_power_fraction override: optional, clamped to 0.25-0.60
 ```
 
 The project notes mention a defensible 20/80 hotel/propulsion split. The active code uses 40/60 when the catalog does not provide a vehicle-specific value. Vehicles with heavier sensor/hotel load may provide `hotel_fraction` or `hotel_power_fraction` in `data/vehicle_catalog.json`.
 
 Implemented in `core/power.py` and exposed through `core/energy.py::estimate_power_at_speed_kw`.
+
+## Mission Sensor-Mode Power
+
+Mission sensor-mode power is sampled as an additive Monte Carlo term. It does not replace the speed-power model or the hotel/propulsion split.
+
+```text
+P_vehicle_speed = P_hotel + P_propulsion + P_low_speed
+P_active = P_vehicle_speed + P_sensor_mode
+```
+
+Implemented ranges:
+
+```text
+Route / Transit and legacy Payload labels = Uniform(0 W, 25 W) / 1000
+ISR / Persistence = Uniform(50 W, 75 W) / 1000
+Search/MCM / Area Search = Uniform(75 W, 150 W) / 1000
+default = 0.0 kW
+```
+
+Segment equation:
+
+```text
+E_transit = (P_vehicle_speed + P_transit_sensor_mode) * T_transit
+E_mission_active = (P_vehicle_speed + P_active_sensor_mode) * T_active
+E_total = E_transit + E_mission_active
+sensor_energy_kwh = sampled_sensor_power_kw * active_sensor_duration_hr
+```
+
+For Search/MCM, active search/survey time uses the Search/MCM sensor range, while additional transit uses the low Route / Transit sensor range. For ISR, the ISR sensor range applies over patrol/on-station endurance time. For Route / Transit, the low sensor range applies over moving route duration.
+
+Implemented in `core/energy.py::sample_mission_sensor_power_kw` and `core/energy.py::run_energy_simulation`.
 
 ## Hydrodynamic Cross-Check Equations
 
@@ -117,7 +148,7 @@ along_current_kts = current_speed_kts * cos(relative_angle)
 cross_current_kts = current_speed_kts * sin(relative_angle)
 ```
 
-Payload current penalty:
+Route / Transit current penalty:
 
 ```text
 payload_current_penalty = 0.04 * min(abs(cross_current_kts) / vehicle_speed_kts, 2.0)
@@ -141,7 +172,7 @@ Implemented in `core/environment.py` and `core/energy.py`.
 
 ## Environmental Uplift
 
-Payload and ISR use additive planning factors inside one multiplier:
+Route / Transit and ISR use additive planning factors inside one multiplier:
 
 ```text
 environmental_multiplier = 1.0 + current_penalty + salinity_penalty
@@ -171,15 +202,17 @@ Interpretation:
 
 Implemented in `core/environment.py::salinity_buoyancy_penalty` and applied in `core/energy.py`.
 
-## Payload Mission Logic
+## Route / Transit Mission Logic
 
-Payload Delivery currently uses a line route.
+The user-facing mode is `Route / Transit`. Legacy `Payload`, `Payload Delivery`, and `Delivery` labels still map into the same internal branch for compatibility.
 
 ```text
 outbound_time_hr = route_leg_time_hr(route_distance, speed, current, route_heading)
 return_time_hr = route_leg_time_hr(route_distance, speed, current, reciprocal_heading) if return_to_start else 0
 transit_time_hr = additional_transit_km / max(speed_kts * 1.852, 0.1)
 duration_single_hr = outbound_time_hr + return_time_hr + transit_time_hr
+active_sensor_duration_hr = outbound_time_hr + return_time_hr + transit_time_hr
+mission_sensor_power_kw = Uniform(0 W, 25 W) / 1000
 
 penalty_pct = (payload_weight_kg / vehicle_energy_kwh) * 0.30
 weight_penalty_multiplier = 1.0 + min(5.0, max(0.0, penalty_pct)) / 100.0
@@ -188,9 +221,10 @@ outbound_power_kw = estimate_power_at_speed_kw(..., propulsion_multiplier=weight
 return_power_kw = speed_adjusted_power_kw(...)
 launch_recovery_energy_kwh = launch_recovery_overhead_hr * launch_recovery_power_kw
 energy_single_kwh = (
-    outbound_power_kw * (outbound_time_hr + transit_time_hr)
-    + return_power_kw * return_time_hr
+    (outbound_power_kw + mission_sensor_power_kw) * (outbound_time_hr + transit_time_hr)
+    + (return_power_kw + mission_sensor_power_kw) * return_time_hr
 ) * environmental_multiplier + launch_recovery_energy_kwh
+mission_sensor_energy_kwh = mission_sensor_power_kw * active_sensor_duration_hr * environmental_multiplier
 ```
 
 Route-leg speed over ground is bounded to at least 25 percent of commanded vehicle speed to avoid impossible or singular current cases:
@@ -199,7 +233,7 @@ Route-leg speed over ground is bounded to at least 25 percent of commanded vehic
 speed_over_ground = max(vehicle_speed + along_current, vehicle_speed * 0.25)
 ```
 
-The payload multiplier applies to outbound propulsion power only, not fixed hotel load. Search/MCM and ISR ignore payload weight. Payload burden does not rely on public dry-weight data; payload mass is treated as a bounded trim/integration planning penalty scaled against vehicle energy class because payload weight alone is not a direct hydrodynamic drag variable. Payload-specific drag modeling is future work if area, Cd, mounting, buoyancy, and trim data become available. Return-to-start missions include an unburdened return leg after delivery. One-way mode uses outbound route energy only. Recoverable payload missions add a small launch/recovery overhead; one-way/non-recoverable missions do not. Sprint/hibernate/deploy phasing remains future work and is not the same as one-way routing.
+The carried-equipment multiplier applies to outbound propulsion power only, not fixed hotel load. Search/MCM and ISR ignore carried equipment weight. Equipment burden does not rely on public dry-weight data; equipment mass is treated as a bounded trim/integration planning penalty scaled against vehicle energy class because weight alone is not a direct hydrodynamic drag variable. Equipment-specific drag modeling is future work if area, Cd, mounting, buoyancy, and trim data become available. Return-to-start missions include an unburdened return leg after delivery/turnaround. One-way mode uses outbound route energy only. Recoverable Route / Transit missions add a small launch/recovery overhead; one-way/non-recoverable missions do not. Sprint/hibernate/deploy phasing remains future work and is not the same as one-way routing.
 
 Implemented in `core/energy.py`.
 
@@ -215,11 +249,20 @@ East-West track_heading_deg = 90
 For each candidate:
 
 ```text
-distance_km = clipped_track_distance_km + turn_distance_km + additional_transit_km
-base_duration_hr = distance_km / max(speed_kts * 1.852, 0.1)
-duration_hr = base_duration_hr * search_current_duration_multiplier
-duration_hr += turns * 0.01
-energy_kwh = dynamic_power_kw * duration_hr * (1 + salinity_penalty)
+search_distance_km = clipped_track_distance_km + turn_distance_km
+search_base_duration_hr = search_distance_km / max(speed_kts * 1.852, 0.1)
+search_duration_hr = search_base_duration_hr * search_current_duration_multiplier
+search_duration_hr += turns * 0.01
+transit_duration_hr = additional_transit_km / max(speed_kts * 1.852, 0.1)
+duration_hr = search_duration_hr + transit_duration_hr
+
+active_sensor_power_kw = Uniform(75 W, 150 W) / 1000
+transit_sensor_power_kw = Uniform(0 W, 25 W) / 1000
+
+energy_kwh = (
+    (dynamic_power_kw + active_sensor_power_kw) * search_duration_hr
+    + (dynamic_power_kw + transit_sensor_power_kw) * transit_duration_hr
+) * (1 + salinity_penalty)
 ```
 
 The lower-energy orientation is selected for the run.
@@ -239,13 +282,18 @@ rectangle patrol = 2 * (width_km + height_km)
 Endurance:
 
 ```text
-available_mission_energy_kwh = usable_energy_kwh * (1 - reserve_fraction)
+isr_sensor_power_kw = Uniform(50 W, 75 W) / 1000
+endurance_power_kw = sampled_vehicle_speed_power_kw + isr_sensor_power_kw
+available_mission_energy_kwh = usable_energy_kwh
 adjusted_power_kw = endurance_power_kw * environmental_multiplier
 max_time_on_station_hr = available_mission_energy_kwh / adjusted_power_kw
 loop_time_hr = loop_distance_km / (endurance_speed_kts * 1.852)
 completed_loops = floor(max_time_on_station_hr / loop_time_hr)
 remaining_partial_loop_pct = (max_time_on_station_hr % loop_time_hr) / loop_time_hr * 100
+mission_sensor_energy_kwh = isr_sensor_power_kw * max_time_on_station_hr * environmental_multiplier
 ```
+
+`usable_energy_kwh` is already sampled after operator reserve and temperature capacity derating, so the active ISR call does not apply reserve a second time inside `compute_isr_persistence`.
 
 For reporting and sustainment planning, ISR now uses mission-total endurance-window energy as the planning basis. Loop energy remains visible for coverage accounting, but the planning energy is the total energy expended across the completed and partial loop set before recovery/swap:
 
@@ -264,8 +312,6 @@ The model compares P80 mission energy against available inventory:
 
 ```text
 battery_sets_required_p80 = ceil(p80_energy_kwh / usable_battery_per_set_kwh)
-if mission_type == ISR:
-    battery_sets_required_p80 = 1
 battery_shortfall = max(0, battery_sets_required_p80 - battery_sets_available)
 recharge_sequences_required = battery_shortfall if recharge_allowed else 0
 recharge_downtime_hr = recharge_sequences_required * vehicle.recharge_hr
@@ -300,7 +346,7 @@ Current lookup policy:
 
 ```text
 Search/MCM single area: area centroid
-Payload Delivery: route midpoint
+Route / Transit and legacy Payload labels: route midpoint
 ISR: first patrol point
 Multi-area Search/MCM: each area centroid, then aggregate
 ```
@@ -359,4 +405,5 @@ Implemented in `core/sustainment.py`.
 
 The following project-note items are implementation backlog, not current behavior:
 
-- Multi-phase hibernate/sprint payload mission logic.
+- Multi-phase hibernate/sprint route/transit mission logic.
+- Vehicle-specific mission sensor-mode overrides.

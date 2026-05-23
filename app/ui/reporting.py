@@ -65,6 +65,8 @@ def _format_display_cell(value: object, unit: str) -> object:
     unit_lower = unit.lower()
     if unit_lower in {"sets", "loops", "sequences", "runs", "lanes"}:
         return fmt_int(value)
+    if unit_lower == "w" or unit_lower.startswith("w "):
+        return fmt_int(value)
     if unit_lower in {"kwh", "km", "hr", "kts", "deg c", "%", "kw", "m", "kg/m3", "weeks", "missions"}:
         return fmt1(value)
     if isinstance(value, float):
@@ -161,20 +163,20 @@ def _mini_marker(label: str, value: float, maximum: float, color: str) -> str:
 
 
 def build_energy_detail_helper(summary: dict[str, object]) -> str:
-    """Render a compact P50/P80/P95 uncertainty range helper."""
-    p50 = _as_float(summary.get("p50_energy_kwh"))
-    p80 = _as_float(summary.get("p80_energy_kwh"))
-    p95 = _as_float(summary.get("p95_energy_kwh"))
-    values = [value for value in (p50, p80, p95) if value is not None]
+    """Render a compact recommendation-led energy range helper."""
+    expected = _as_float(summary.get("expected_energy_kwh") or summary.get("mean_energy_kwh"))
+    recommended = _as_float(summary.get("recommended_planning_energy_kwh") or summary.get("planning_energy_kwh") or summary.get("p80_energy_kwh"))
+    stress = _as_float(summary.get("conservative_stress_energy_kwh") or summary.get("conservative_energy_kwh") or summary.get("p95_energy_kwh"))
+    values = [value for value in (expected, recommended, stress) if value is not None]
     if len(values) < 2 or max(values) <= 0:
         return ""
     maximum = max(values) * 1.15
     markers = "".join(
         marker
         for marker in (
-            _mini_marker("P50", p50 or 0.0, maximum, "#60a5fa"),
-            _mini_marker("P80", p80 or 0.0, maximum, "#fbbf24"),
-            _mini_marker("P95", p95 or 0.0, maximum, "#f87171"),
+            _mini_marker("Expected", expected or 0.0, maximum, "#60a5fa"),
+            _mini_marker("Recommended", recommended or 0.0, maximum, "#fbbf24"),
+            _mini_marker("Stress", stress or 0.0, maximum, "#f87171"),
         )
         if marker
     )
@@ -182,29 +184,29 @@ def build_energy_detail_helper(summary: dict[str, object]) -> str:
         "<div class='section-insight-card mini-range-card'>"
         "<div class='mini-title'>Energy uncertainty spread</div>"
         f"<div class='mini-bar mini-range'>{markers}</div>"
-        f"<div class='mini-caption'>Expected {fmt1(p50)} kWh | Planning {fmt1(p80)} kWh | Conservative {fmt1(p95)} kWh</div>"
+        f"<div class='mini-caption'>Expected {fmt1(expected)} kWh | Recommended {fmt1(recommended)} kWh | Stress {fmt1(stress)} kWh</div>"
         "</div>"
     )
 
 
 def build_battery_detail_helper(summary: dict[str, object]) -> str:
-    """Render planning/conservative demand against usable inventory."""
+    """Render recommended/stress demand against usable inventory."""
     total = _as_float(summary.get("total_available_kwh"))
-    p80 = _as_float(summary.get("p80_energy_kwh"))
-    p95 = _as_float(summary.get("p95_energy_kwh"))
-    if not total or total <= 0 or p80 is None:
+    recommended = _as_float(summary.get("recommended_planning_energy_kwh") or summary.get("planning_energy_kwh") or summary.get("p80_energy_kwh"))
+    stress = _as_float(summary.get("conservative_stress_energy_kwh") or summary.get("conservative_energy_kwh") or summary.get("p95_energy_kwh"))
+    if not total or total <= 0 or recommended is None:
         return ""
-    p80_pct = max(p80 / total * 100.0, 0.0)
-    p95_pct = max((p95 or p80) / total * 100.0, 0.0)
-    p80_bar_pct = min(p80_pct, 100.0)
-    p95_bar_pct = min(p95_pct, 100.0)
-    cap_note = " Visual gauge capped at 100%." if p80_pct > 100.0 or p95_pct > 100.0 else ""
+    recommended_pct = max(recommended / total * 100.0, 0.0)
+    stress_pct = max((stress or recommended) / total * 100.0, 0.0)
+    recommended_bar_pct = min(recommended_pct, 100.0)
+    stress_bar_pct = min(stress_pct, 100.0)
+    cap_note = " Visual gauge capped at 100%." if recommended_pct > 100.0 or stress_pct > 100.0 else ""
     return (
         "<div class='section-insight-card'>"
         "<div class='mini-title'>Usable inventory coverage</div>"
-        f"<div class='mini-bar'><span class='mini-fill planning' style='width:{p80_bar_pct:.1f}%'></span></div>"
-        f"<div class='mini-bar secondary'><span class='mini-fill conservative' style='width:{p95_bar_pct:.1f}%'></span></div>"
-        f"<div class='mini-caption'>P80 uses {fmt1(p80_pct)}% of inventory; P95 uses {fmt1(p95_pct)}%.{cap_note}</div>"
+        f"<div class='mini-bar'><span class='mini-fill planning' style='width:{recommended_bar_pct:.1f}%'></span></div>"
+        f"<div class='mini-bar secondary'><span class='mini-fill conservative' style='width:{stress_bar_pct:.1f}%'></span></div>"
+        f"<div class='mini-caption'>Recommended uses {fmt1(recommended_pct)}% of inventory; stress estimate uses {fmt1(stress_pct)}%.{cap_note}</div>"
         "</div>"
     )
 
@@ -253,7 +255,7 @@ def build_geometry_detail_helper(summary: dict[str, object]) -> str:
         route_pct = min(max(route / total * 100.0, 0.0), 100.0)
         return (
             "<div class='section-insight-card'>"
-            "<div class='mini-title'>Payload route burden</div>"
+            "<div class='mini-title'>Route / transit burden</div>"
             f"<div class='mini-bar'><span class='mini-fill planning' style='width:{route_pct:.1f}%'></span></div>"
             f"<div class='mini-caption'>{fmt1(route)} km direct route within {fmt1(total)} km total modeled distance.</div>"
             "</div>"
@@ -409,16 +411,18 @@ def _plain_status_text(summary: dict[str, object]) -> tuple[str, str]:
     mission_type = str(summary.get("mission_type") or "")
     if mission_type in ISR_MISSIONS:
         return _isr_status_text(summary)
-    p80 = _as_float(summary.get("p80_energy_kwh"))
-    p95 = _as_float(summary.get("p95_energy_kwh"))
+    recommended = _as_float(summary.get("recommended_planning_energy_kwh") or summary.get("planning_energy_kwh") or summary.get("p80_energy_kwh"))
+    stress = _as_float(summary.get("conservative_stress_energy_kwh") or summary.get("conservative_energy_kwh") or summary.get("p95_energy_kwh"))
     total_available = _as_float(summary.get("total_available_kwh"))
-    sets_p80 = _as_int(summary.get("battery_sets_required_p80"))
+    sets_recommended = _as_int(summary.get("battery_sets_required_recommended") or summary.get("battery_sets_required_recommended_planning") or summary.get("battery_sets_required_p80"))
     sets_available = _as_int(summary.get("battery_sets_available"))
     usable_per_set = _as_float(summary.get("usable_battery_per_set_kwh"))
-    sets_p95 = math.ceil(p95 / usable_per_set) if p95 is not None and usable_per_set and usable_per_set > 0 else sets_p80
-    margin_p80 = (total_available - p80) if total_available is not None and p80 is not None else None
-    conservative_ok = sets_available is not None and sets_p95 is not None and sets_p95 <= sets_available
-    planning_ok = sets_available is not None and sets_p80 is not None and sets_p80 <= sets_available
+    sets_stress = _as_int(summary.get("battery_sets_required_stress") or summary.get("battery_sets_required_conservative_stress"))
+    if sets_stress is None:
+        sets_stress = math.ceil(stress / usable_per_set) if stress is not None and usable_per_set and usable_per_set > 0 else sets_recommended
+    margin_recommended = (total_available - recommended) if total_available is not None and recommended is not None else None
+    stress_ok = sets_available is not None and sets_stress is not None and sets_stress <= sets_available
+    planning_ok = sets_available is not None and sets_recommended is not None and sets_recommended <= sets_available
     one_way_inventory = summary.get("vehicle_rechargeable") is False
     recharge_category = str(summary.get("recharge_feasibility_category") or "")
     shortfall = _as_float(summary.get("in_mission_recharge_shortfall_kwh")) or 0.0
@@ -436,22 +440,22 @@ def _plain_status_text(summary: dict[str, object]) -> tuple[str, str]:
                 "Not feasible under current recharge assumptions. The mission exceeds charged inventory and the recharge cycle cannot recover depleted sets before reuse.",
             )
     if mission_type in PAYLOAD_MISSIONS:
-        if conservative_ok:
+        if stress_ok:
             inventory_phrase = "one-way vehicle inventory" if one_way_inventory else "battery inventory"
-            return "Feasible", f"Feasible. The selected platform can complete the payload route with the declared {inventory_phrase}; maintain the recorded METOC and energy assumptions for review."
-        status = "Marginal" if planning_ok or (margin_p80 is not None and margin_p80 >= 0) else "Not feasible"
+            return "Feasible", f"Feasible. The selected platform can complete the route/transit plan with the declared {inventory_phrase}; maintain the recorded METOC and energy assumptions for review."
+        status = "Marginal" if planning_ok or (margin_recommended is not None and margin_recommended >= 0) else "Not feasible"
         if one_way_inventory:
-            return status, f"{status}. The selected payload route exceeds the declared one-way inventory margin; add vehicle units or reduce transit burden."
-        return status, f"{status}. The selected payload route exceeds the declared planning margin; reduce transit burden, add inventory, or plan recharge/swap support."
+            return status, f"{status}. The selected route/transit plan exceeds the declared one-way inventory margin; add vehicle units or reduce transit burden."
+        return status, f"{status}. The selected route/transit plan exceeds the declared planning margin; reduce transit burden, add inventory, or plan recharge/swap support."
     if mission_type in SEARCH_MISSIONS:
-        if conservative_ok:
+        if stress_ok:
             return "Feasible", "Feasible. The selected platform can complete the search/MCM plan within the declared battery inventory and planning assumptions."
-        status = "Marginal" if planning_ok or (margin_p80 is not None and margin_p80 >= 0) else "Not feasible"
+        status = "Marginal" if planning_ok or (margin_recommended is not None and margin_recommended >= 0) else "Not feasible"
         return status, f"{status}. The selected search/MCM plan exceeds declared inventory; reduce area, increase track spacing, add charged inventory, or plan recharge/swap support."
-    if conservative_ok:
+    if stress_ok:
         return "Feasible", "Feasible. The selected platform can complete the mission within the declared inventory and planning assumptions."
-    if planning_ok or (margin_p80 is not None and margin_p80 >= 0):
-        return "Marginal", "Marginal. The mission covers the planning case, but conservative margin is limited; stage extra battery or recharge support."
+    if planning_ok or (margin_recommended is not None and margin_recommended >= 0):
+        return "Marginal", "Marginal. The mission covers the recommended planning case, but stress margin is limited; stage extra battery or recharge support."
     return "Not feasible", "Not feasible. Add charged battery inventory, reduce mission burden, or plan recharge/swap support before execution."
 
 
@@ -518,10 +522,16 @@ def _decision_kpis(summary: dict[str, object], environment: EnvironmentData) -> 
     del environment
     if mission_type in ISR_MISSIONS:
         one_way_inventory = summary.get("vehicle_rechargeable") is False
+        expected = _as_float(summary.get("expected_energy_kwh") or summary.get("mean_energy_kwh"))
+        recommended = _as_float(summary.get("recommended_planning_energy_kwh") or summary.get("planning_energy_kwh") or summary.get("p80_energy_kwh"))
+        stress = _as_float(summary.get("conservative_stress_energy_kwh") or summary.get("conservative_energy_kwh") or summary.get("p95_energy_kwh"))
         partial_km = _as_float(summary.get("isr_partial_loop_distance_km_total_inventory"))
         partial_pct = _as_float(summary.get("isr_remaining_partial_loop_pct"))
         partial_text = f"{fmt1(partial_km)} km" if partial_km is not None else f"{fmt1(partial_pct)}%"
         return [
+            _kpi_tile("Expected mission energy", f"{fmt1(expected)} kWh"),
+            _kpi_tile("Recommended planning energy", f"{fmt1(recommended)} kWh"),
+            _kpi_tile("Conservative stress estimate", f"{fmt1(stress)} kWh"),
             _kpi_tile("Patrol loop distance", f"{fmt1(summary.get('isr_loop_distance_km'))} km"),
             _kpi_tile("Full loops", f"{fmt_int(summary.get('isr_completed_loops_total_inventory') or summary.get('isr_completed_loops_single_set'))} loops"),
             _kpi_tile("Partial next loop", partial_text),
@@ -530,21 +540,27 @@ def _decision_kpis(summary: dict[str, object], environment: EnvironmentData) -> 
             _kpi_tile("Recovery / replacement" if one_way_inventory else "Recovery/swap", f"{fmt1(summary.get('isr_swap_window_hr') or summary.get('isr_single_set_endurance_hr'))} hr"),
         ]
     usable_per_set = _as_float(summary.get("usable_battery_per_set_kwh"))
-    p80 = _as_float(summary.get("p80_energy_kwh"))
-    p95 = _as_float(summary.get("p95_energy_kwh"))
+    expected = _as_float(summary.get("expected_energy_kwh") or summary.get("mean_energy_kwh"))
+    uncertainty = _as_float(summary.get("energy_uncertainty_allowance_kwh"))
+    recommended = _as_float(summary.get("recommended_planning_energy_kwh") or summary.get("planning_energy_kwh") or summary.get("p80_energy_kwh"))
+    stress = _as_float(summary.get("conservative_stress_energy_kwh") or summary.get("conservative_energy_kwh") or summary.get("p95_energy_kwh"))
     total_available = _as_float(summary.get("total_available_kwh"))
-    sets_p80 = _as_int(summary.get("battery_sets_required_p80"))
-    sets_p95 = math.ceil(p95 / usable_per_set) if p95 is not None and usable_per_set and usable_per_set > 0 else sets_p80
-    margin = (total_available - p80) if total_available is not None and p80 is not None else None
+    sets_recommended = _as_int(summary.get("battery_sets_required_recommended") or summary.get("battery_sets_required_recommended_planning") or summary.get("battery_sets_required_p80"))
+    sets_stress = _as_int(summary.get("battery_sets_required_stress") or summary.get("battery_sets_required_conservative_stress"))
+    if sets_stress is None:
+        sets_stress = math.ceil(stress / usable_per_set) if stress is not None and usable_per_set and usable_per_set > 0 else sets_recommended
+    margin = (total_available - recommended) if total_available is not None and recommended is not None else None
     sets_available = int(summary.get("battery_sets_available") or 0)
     one_way_inventory = summary.get("vehicle_rechargeable") is False
-    p80_label = "Vehicle units P80" if one_way_inventory else "Battery sets P80"
-    p95_label = "Vehicle units P95" if one_way_inventory else "Battery sets P95"
+    recommended_label = "Vehicle units recommended" if one_way_inventory else "Battery sets recommended"
+    stress_label = "Vehicle units stress" if one_way_inventory else "Battery sets stress"
     return [
-        _kpi_tile("Planning energy P80", f"{fmt1(p80)} kWh"),
-        _kpi_tile("Conservative energy P95", f"{fmt1(p95)} kWh"),
-        _kpi_tile(p80_label, fmt_int(sets_p80), status="sufficient" if sets_p80 and sets_p80 <= sets_available else "marginal"),
-        _kpi_tile(p95_label, fmt_int(sets_p95), status="sufficient" if sets_p95 and sets_p95 <= sets_available else "marginal"),
+        _kpi_tile("Expected mission energy", f"{fmt1(expected)} kWh"),
+        _kpi_tile("Uncertainty allowance", f"{fmt1(uncertainty)} kWh"),
+        _kpi_tile("Recommended planning energy", f"{fmt1(recommended)} kWh"),
+        _kpi_tile("Conservative stress estimate", f"{fmt1(stress)} kWh"),
+        _kpi_tile(recommended_label, fmt_int(sets_recommended), status="sufficient" if sets_recommended and sets_recommended <= sets_available else "marginal"),
+        _kpi_tile(stress_label, fmt_int(sets_stress), status="sufficient" if sets_stress and sets_stress <= sets_available else "marginal"),
         _kpi_tile("Inventory margin", f"{fmt1(margin)} kWh", status="sufficient" if margin is not None and margin >= 0 else "shortfall"),
         _kpi_tile("Mission duration", f"{fmt1(summary.get('mean_duration_hr'))} hr"),
     ]
@@ -552,6 +568,8 @@ def _decision_kpis(summary: dict[str, object], environment: EnvironmentData) -> 
 
 def _monte_carlo_phrase(summary: dict[str, object]) -> str:
     """Return the visible Monte Carlo ensemble phrase."""
+    if summary.get("deterministic_run") or str(summary.get("simulation_mode") or "").lower().startswith("deterministic"):
+        return "a deterministic single-case estimate"
     for key in ("monte_carlo_runs", "mc_runs", "simulation_count", "num_samples", "n_samples"):
         runs = _as_int(summary.get(key))
         if runs is not None and runs > 0:
@@ -561,12 +579,16 @@ def _monte_carlo_phrase(summary: dict[str, object]) -> str:
 
 def _seed_phrase(summary: dict[str, object]) -> str:
     """Return whether the run used a user-fixed deterministic seed."""
+    if summary.get("deterministic_run") or str(summary.get("simulation_mode") or "").lower().startswith("deterministic"):
+        return "using default assumptions"
     requested_seed = summary.get("rng_seed_requested")
     if requested_seed not in (None, ""):
         return f"using deterministic seed {escape(str(requested_seed))}"
     if "rng_seed_requested" not in summary and summary.get("rng_seed") not in (None, ""):
         return f"using deterministic seed {escape(str(summary.get('rng_seed')))}"
-    return "without a fixed deterministic seed"
+    if summary.get("rng_seed") not in (None, ""):
+        return "with a generated seed recorded for traceability"
+    return "without a recorded deterministic seed"
 
 
 def _planning_basis_phrase(summary: dict[str, object]) -> str:
@@ -590,10 +612,12 @@ def _dominant_factor_phrase(summary: dict[str, object], mission_type: str) -> st
     payload_weight = _as_float(summary.get("payload_weight_kg")) or 0.0
     if payload_weight > 0.0:
         return "payload trim/integration burden and route current"
-    if current > 0.05:
-        return "route/track current burden"
     if mission_type in SEARCH_MISSIONS:
-        return "search area and track spacing"
+        if current > 0.05:
+            return "search-track current burden, salinity adjustment, mission sensor-mode demand, and selected platform energy capacity"
+        return "search area, track spacing, mission sensor-mode demand, and selected platform energy capacity"
+    if current > 0.05:
+        return "route current burden"
     if mission_type in ISR_MISSIONS:
         return "patrol loop length and endurance-mode speed"
     if salinity > 0.0:
@@ -609,7 +633,18 @@ def _executive_results_summary_html(summary: dict[str, object], environment: Env
     ensemble = _monte_carlo_phrase(summary)
     seed = _seed_phrase(summary)
     platform = str(summary.get("platform") or "the selected platform")
-    method = f"The simulation used {ensemble} {seed}; percentile outputs are retained in technical traceability."
+    if summary.get("deterministic_run") or str(summary.get("simulation_mode") or "").lower().startswith("deterministic"):
+        method = f"The simulation used {ensemble} {seed}; technical traceability is retained for audit review."
+    else:
+        method = f"The simulation used {ensemble} {seed}; percentile outputs are retained in technical traceability."
+    expected = _as_float(summary.get("expected_energy_kwh") or summary.get("mean_energy_kwh"))
+    recommended = _as_float(summary.get("recommended_planning_energy_kwh") or summary.get("planning_energy_kwh") or summary.get("p80_energy_kwh"))
+    stress = _as_float(summary.get("conservative_stress_energy_kwh") or summary.get("conservative_energy_kwh") or summary.get("p95_energy_kwh"))
+    recommendation_sentence = (
+        f"Expected mission energy is {fmt1(expected)} kWh. "
+        f"Recommended planning energy is {fmt1(recommended)} kWh after applying the modeled uncertainty allowance. "
+        f"The conservative stress estimate is {fmt1(stress)} kWh based on the upper tail of the Monte Carlo output distribution."
+    )
     if mission_type in ISR_MISSIONS:
         loop_distance = _as_float(summary.get("isr_loop_distance_km"))
         loop_time = _as_float(summary.get("isr_loop_time_hr"))
@@ -622,11 +657,9 @@ def _executive_results_summary_html(summary: dict[str, object], environment: Env
         )
         second = (
             f"The declared inventory supports approximately {fmt1(total_endurance)} hr and {fmt_int(loops_total)} full loop(s), "
-            f"with recovery/swap planned near the endurance window. {method}"
+            f"with recovery/swap planned near the endurance window. {recommendation_sentence} {method}"
         )
     elif mission_type in SEARCH_MISSIONS:
-        p80 = _as_float(summary.get("p80_energy_kwh"))
-        p95 = _as_float(summary.get("p95_energy_kwh"))
         area = _as_float(summary.get("total_search_area_km2") or summary.get("search_area_km2"))
         if area is None:
             width = _as_float(summary.get("search_width_km"))
@@ -640,18 +673,15 @@ def _executive_results_summary_html(summary: dict[str, object], environment: Env
             f"across {fmt_int(areas)} selected area(s)."
         )
         second = (
-            f"Planning energy is {fmt1(p80)} kWh and conservative energy is {fmt1(p95)} kWh; "
-            f"battery sufficiency is driven by {factor}, METOC burden, and selected platform energy capacity. {method}"
+            f"{recommendation_sentence} Battery sufficiency is driven by {factor}. {method}"
         )
     else:
         route = _as_float(summary.get("route_distance_km"))
         heading = _as_float(summary.get("route_heading_deg"))
         total_distance = _as_float(summary.get("payload_total_modeled_distance_km"))
-        p80 = _as_float(summary.get("p80_energy_kwh"))
-        p95 = _as_float(summary.get("p95_energy_kwh"))
         factor = _dominant_factor_phrase(summary, mission_type)
         first = (
-            f"The modeled payload mission uses {platform} over a {fmt1(route)} km route on heading {fmt1(heading)} deg, "
+            f"The modeled route/transit mission uses {platform} over a {fmt1(route)} km route on heading {fmt1(heading)} deg, "
             "with METOC sampled at the route midpoint."
         )
         distance_clause = (
@@ -660,8 +690,7 @@ def _executive_results_summary_html(summary: dict[str, object], environment: Env
             else ""
         )
         second = (
-            f"Planning energy is {fmt1(p80)} kWh and conservative energy is {fmt1(p95)} kWh; "
-            f"battery sufficiency is primarily influenced by {factor}, declared inventory, and recovery mode."
+            f"{recommendation_sentence} Battery sufficiency is primarily influenced by {factor}, declared inventory, and recovery mode."
             f"{distance_clause} {method}"
         )
     sentences = [sentence for sentence in (first, second) if sentence and "None" not in sentence]
@@ -729,7 +758,7 @@ def _payload_planning_note(summary: dict[str, object], area: MissionArea, enviro
     payload_penalty_pct = _as_float(summary.get("payload_weight_penalty_pct"))
     if payload_weight and payload_weight > 0:
         parts.append(
-            f"payload weight is {fmt1(payload_weight)} kg; payload carriage penalty: {fmt1(payload_penalty_pct or 0.0, '%')} trim/integration planning burden applied to outbound propulsion energy"
+            f"carried equipment weight is {fmt1(payload_weight)} kg; equipment carriage penalty: {fmt1(payload_penalty_pct or 0.0, '%')} trim/integration planning burden applied to outbound propulsion energy"
         )
     launch_recovery_energy = _as_float(summary.get("launch_recovery_energy_kwh"))
     if launch_recovery_energy and launch_recovery_energy > 0:
@@ -737,7 +766,7 @@ def _payload_planning_note(summary: dict[str, object], area: MissionArea, enviro
     catalog_note = str(summary.get("payload_one_way_catalog_note") or "")
     if catalog_note:
         parts.append(catalog_note)
-    return "Payload mission planning: " + "; ".join(parts) + "." if parts else ""
+    return "Route / transit mission planning: " + "; ".join(parts) + "." if parts else ""
 
 
 def _isr_planning_note(summary: dict[str, object]) -> str:
@@ -787,7 +816,7 @@ def _search_planning_note(summary: dict[str, object], area: MissionArea) -> str:
     orientation = summary.get("recommended_track_orientation")
     track_distance = _as_float(summary.get("search_track_distance_km"))
     total_distance = _as_float(summary.get("search_total_distance_km"))
-    sets_required = _as_int(summary.get("battery_sets_required_p80"))
+    sets_required = _as_int(summary.get("battery_sets_required_recommended") or summary.get("battery_sets_required_p80"))
     sets_available = _as_int(summary.get("battery_sets_available"))
     if search_area is not None:
         if area_count and area_count > 1:
@@ -807,9 +836,9 @@ def _search_planning_note(summary: dict[str, object], area: MissionArea) -> str:
         parts.append(burden)
     if sets_required is not None:
         if sets_required > 1:
-            parts.append(f"plan {sets_required - 1} battery swap window(s) for a single planning-level mission")
+            parts.append(f"plan {sets_required - 1} battery swap window(s) for a single recommended planning mission")
         elif sets_available is not None and sets_available >= 1:
-            parts.append("one battery set covers the single planning-level mission")
+            parts.append("one battery set covers the single recommended planning mission")
     return "Search/MCM planning: " + "; ".join(parts) + "." if parts else ""
 
 
@@ -849,33 +878,92 @@ def build_energy_planner_summary_html(summary: dict[str, object], area: MissionA
     </div>
     """
     traceability_html = build_technical_traceability_html(summary, environment, vehicle)
-    return decision_html + traceability_html
+    validation_html = build_validation_comparison_html(summary)
+    return decision_html + validation_html + traceability_html
+
+
+def build_validation_comparison_html(summary: dict[str, object]) -> str:
+    """Render an optional V&V comparison block when observed energy is provided."""
+    observed = (
+        _as_float(summary.get("observed_aus_energy_kwh"))
+        or _as_float(summary.get("validation_observed_energy_kwh"))
+        or _as_float(summary.get("observed_energy_kwh"))
+    )
+    if observed is None:
+        return ""
+    p50 = _as_float(summary.get("p50_energy_kwh"))
+    p80 = _as_float(summary.get("p80_energy_kwh"))
+    p95 = _as_float(summary.get("p95_energy_kwh"))
+    if p50 is None or p80 is None or p95 is None:
+        return ""
+    if observed < p50:
+        position = "below P50"
+    elif observed <= p80:
+        position = "between P50 and P80"
+    elif observed <= p95:
+        position = "between P80 and P95"
+    else:
+        position = "above P95"
+    p80_error = ((p80 - observed) / observed * 100.0) if observed else 0.0
+    p95_conservatism = ((p95 - observed) / observed * 100.0) if observed else 0.0
+    rows = [
+        ("Observed AUS energy", observed, "kWh"),
+        ("Sim P50", p50, "kWh"),
+        ("Sim P80", p80, "kWh"),
+        ("Sim P95", p95, "kWh"),
+        ("Observed position", position, ""),
+        ("P80 error", p80_error, "%"),
+        ("P95 conservatism", p95_conservatism, "%"),
+        (
+            "Validation interpretation",
+            "The observed AUS mission energy falls between the revised expected and planning-level estimates."
+            if position == "between P50 and P80"
+            else f"The observed AUS mission energy is {position} for this Monte Carlo run.",
+            "",
+        ),
+    ]
+    return build_report_table_html(rows, "Validation Comparison")
 
 
 def build_technical_traceability_html(summary: dict[str, object], environment: EnvironmentData, vehicle: object | None = None) -> str:
     """Build the lower technical traceability/model-detail section."""
     source_note = getattr(vehicle, "source_note", "") if vehicle is not None else summary.get("source_note", "")
     usable_basis = getattr(vehicle, "usable_basis", "") if vehicle is not None else summary.get("usable_basis", "")
+    hotel_fraction_mean = _as_float(summary.get("hotel_fraction_mean"))
     rows = [
         ("App version", APP_VERSION, ""),
         ("Energy model version", ENERGY_MODEL_VERSION, ""),
         ("Vehicle catalog version", VEHICLE_CATALOG_VERSION, ""),
         ("Planning basis", summary.get("planning_energy_basis"), ""),
-        ("Planning percentile", summary.get("planning_percentile"), ""),
+        ("Planning recommendation basis", summary.get("recommendation_basis"), ""),
+        ("Recommended planning energy", _float_or_blank(summary.get("recommended_planning_energy_kwh") or summary.get("planning_energy_kwh") or summary.get("p80_energy_kwh")), "kWh"),
+        ("Conservative stress estimate", _float_or_blank(summary.get("conservative_stress_energy_kwh") or summary.get("conservative_energy_kwh")), "kWh"),
+        ("Simulation mode", summary.get("simulation_mode"), ""),
         ("Monte Carlo runs", summary.get("monte_carlo_runs"), ""),
         ("Monte Carlo seed", summary.get("rng_seed"), ""),
-        ("Percentile output definitions", "P50 expected, P80 planning-level, P95 conservative", ""),
+        ("Monte Carlo percentile outputs", f"P50 {fmt1(summary.get('p50_energy_kwh'))} kWh / P80 {fmt1(summary.get('p80_energy_kwh'))} kWh / P95 {fmt1(summary.get('p95_energy_kwh'))} kWh", ""),
+        ("Technical percentile traceability", "P50/P80/P95 are percentiles of the Monte Carlo output distribution. They are not p-values, z-test outputs, or statistical confidence intervals.", ""),
         ("Usable battery fraction P10", _float_or_blank(summary.get("battery_usable_fraction_p10")), ""),
         ("Usable battery fraction P50", _float_or_blank(summary.get("battery_usable_fraction_p50")), ""),
         ("Usable battery fraction P90", _float_or_blank(summary.get("battery_usable_fraction_p90")), ""),
         ("Temperature derating basis", summary.get("temperature_derating_basis"), ""),
-        ("Power draw P10", _float_or_blank(summary.get("power_draw_p10_kw")), "kW"),
-        ("Power draw P50", _float_or_blank(summary.get("power_draw_p50_kw")), "kW"),
-        ("Power draw P90", _float_or_blank(summary.get("power_draw_p90_kw")), "kW"),
+        ("Total active power draw P10", _float_or_blank(summary.get("power_draw_p10_kw")), "kW"),
+        ("Total active power draw P50", _float_or_blank(summary.get("power_draw_p50_kw")), "kW"),
+        ("Total active power draw P90", _float_or_blank(summary.get("power_draw_p90_kw")), "kW"),
+        ("Vehicle speed-power draw P50", _float_or_blank(summary.get("vehicle_speed_power_p50_kw") or summary.get("speed_adjusted_power_kw")), "kW"),
+        ("Mission sensor-mode power P50", _float_or_blank(summary.get("mission_sensor_power_p50_w")), "W"),
         ("Mean speed exponent", _float_or_blank(summary.get("speed_exponent_mean")), ""),
-        ("Mean hotel fraction", _float_or_blank(summary.get("hotel_fraction_mean")), ""),
+        ("Mean hotel power fraction", hotel_fraction_mean * 100.0 if hotel_fraction_mean is not None else "", "%"),
         ("Mean propulsion multiplier", _float_or_blank(summary.get("propulsion_multiplier_mean")), ""),
         ("Mean nominal power scale", _float_or_blank(summary.get("nominal_power_scale_mean")), ""),
+        ("Mission sensor-mode model", "enabled" if summary.get("mission_sensor_power_enabled") else "disabled", ""),
+        (
+            "Search/MCM segment logic",
+            "Active search/survey receives Search/MCM sensor-mode power; added transit receives Route/Transit sensor-mode power."
+            if str(summary.get("mission_type") or "") in SEARCH_MISSIONS
+            else "",
+            "",
+        ),
         ("METOC lookup method", _trace_lookup_method(summary, environment), ""),
         ("Multi-area aggregation method", summary.get("metoc_aggregation_method"), ""),
         ("Run-record traceability status", summary.get("run_record_traceability_status", "recorded"), ""),
@@ -892,7 +980,7 @@ def build_technical_traceability_html(summary: dict[str, object], environment: E
         )
     if environment.salinity_source and environment.salinity_source != "Standard seawater assumption":
         rows.insert(12, ("Salinity provider status", environment.salinity_source, ""))
-    table = build_report_table_html(rows, "Technical Traceability / Model Detail")
+    table = build_report_table_html(rows, None)
     if not table:
         return ""
     return f"<details class='traceability-detail'><summary>Technical Traceability / Model Detail</summary>{table}</details>"
@@ -972,10 +1060,11 @@ def _legacy_energy_planner_summary_html(summary: dict[str, object], area: Missio
         </div>
         """
 
-    p95 = _as_float(summary.get("planning_energy_kwh") or summary.get("p95_energy_kwh"))
+    recommended = _as_float(summary.get("recommended_planning_energy_kwh") or summary.get("planning_energy_kwh") or summary.get("p80_energy_kwh"))
+    stress = _as_float(summary.get("conservative_stress_energy_kwh") or summary.get("conservative_energy_kwh") or summary.get("p95_energy_kwh"))
     planning_basis = str(summary.get("planning_energy_basis") or "mission_total")
     usable_per_set = _as_float(summary.get("usable_battery_per_set_kwh"))
-    sets_required = _as_int(summary.get("battery_sets_required_p80"))
+    sets_required = _as_int(summary.get("battery_sets_required_recommended") or summary.get("battery_sets_required_p80"))
     sets_available = _as_int(summary.get("battery_sets_available"))
     inventory_sufficient_raw = summary.get("battery_inventory_sufficient_no_recharge")
     inventory_sufficient = bool(inventory_sufficient_raw) if inventory_sufficient_raw is not None else None
@@ -984,7 +1073,7 @@ def _legacy_energy_planner_summary_html(summary: dict[str, object], area: Missio
     recharge_category = str(summary.get("recharge_feasibility_category") or "")
     recharge_status = str(summary.get("recharge_feasibility_status") or "")
     recharge_shortfall = _as_float(summary.get("in_mission_recharge_shortfall_kwh")) or 0.0
-    conservative_sets_required = math.ceil(p95 / usable_per_set) if p95 is not None and usable_per_set and usable_per_set > 0 else None
+    conservative_sets_required = math.ceil(stress / usable_per_set) if stress is not None and usable_per_set and usable_per_set > 0 else None
     conservative_inventory_sufficient = (
         conservative_sets_required <= sets_available
         if conservative_sets_required is not None and sets_available is not None
@@ -1003,13 +1092,13 @@ def _legacy_energy_planner_summary_html(summary: dict[str, object], area: Missio
         bluf = "Not feasible under current recharge assumptions. The mission exceeds charged inventory and the recharge cycle cannot recover depleted sets before reuse."
     elif conservative_inventory_sufficient is True:
         inventory_label = "vehicle inventory" if not vehicle_rechargeable else "battery inventory"
-        bluf = f"Mission is feasible with current {inventory_label} at the conservative planning level."
+        bluf = f"Mission is feasible with current {inventory_label} at the conservative stress level."
     elif conservative_inventory_sufficient is False and not vehicle_rechargeable:
-        bluf = "Mission needs additional one-way inventory at the conservative planning level."
+        bluf = "Mission needs additional one-way inventory at the conservative stress level."
     elif conservative_inventory_sufficient is False and recharge_allowed:
-        bluf = "Mission needs recharge, swap sequencing, or additional charged inventory at the conservative planning level."
+        bluf = "Mission needs recharge, swap sequencing, or additional charged inventory at the conservative stress level."
     elif conservative_inventory_sufficient is False:
-        bluf = "Mission is not covered by current battery inventory at the conservative planning level unless additional charged batteries are staged."
+        bluf = "Mission is not covered by current battery inventory at the conservative stress level unless additional charged batteries are staged."
     elif inventory_sufficient is True:
         inventory_label = "vehicle inventory" if not vehicle_rechargeable else "battery inventory"
         bluf = f"Mission is feasible with current {inventory_label} at the planning level."
@@ -1019,21 +1108,21 @@ def _legacy_energy_planner_summary_html(summary: dict[str, object], area: Missio
         bluf = "Mission needs recharge, swap sequencing, or additional charged inventory at the planning level."
     elif inventory_sufficient is False:
         bluf = "Mission is not covered by current battery inventory at the planning level unless additional charged batteries are staged."
-    if p95 is not None:
+    if recommended is not None:
         basis_text = "for the mission total" if planning_basis == "mission_total" else f"for {planning_basis.replace('_', ' ')}"
-        energy_text = f"Conservative planning energy is {_fmt_value(p95)} kWh {basis_text}."
+        energy_text = f"Recommended planning energy is {_fmt_value(recommended)} kWh {basis_text}."
         bluf = f"{bluf} {energy_text}" if bluf else energy_text
     mission_type = str(summary.get("mission_type") or "")
-    if mission_type in PAYLOAD_MISSIONS and p95 is not None:
+    if mission_type in PAYLOAD_MISSIONS and stress is not None:
         total_available = _as_float(summary.get("total_available_kwh"))
         if total_available is not None:
-            conservative_margin = total_available - p95
+            conservative_margin = total_available - stress
             if conservative_margin >= 0:
-                margin_text = f" Conservative energy margin is approximately {fmt1(conservative_margin)} kWh."
+                margin_text = f" Conservative stress energy margin is approximately {fmt1(conservative_margin)} kWh."
                 if conservative_margin <= max(0.25, total_available * 0.10):
                     margin_text += " Margin is limited; consider additional battery inventory or recharge support before repeated tasking."
             else:
-                margin_text = f" Conservative shortfall is approximately {fmt1(abs(conservative_margin))} kWh."
+                margin_text = f" Conservative stress shortfall is approximately {fmt1(abs(conservative_margin))} kWh."
             bluf = f"{bluf}{margin_text}" if bluf else margin_text.strip()
 
     recharge_swap: str | None = None
@@ -1043,7 +1132,7 @@ def _legacy_energy_planner_summary_html(summary: dict[str, object], area: Missio
         if not vehicle_rechargeable:
             recharge_swap = "Selected platform is modeled as non-rechargeable for sustainment planning; use vehicle units and replacement inventory."
         elif recharge_category == "charged_inventory":
-            recharge_swap = "Charged inventory is sufficient; no in-mission recharge is required for the conservative case."
+            recharge_swap = "Charged inventory is sufficient; no in-mission recharge is required for the recommended planning case."
         elif recharge_category == "recharge_supported":
             recharge_swap = "Initial charged inventory is insufficient, but recharge time is shorter than the battery rotation window; mission is feasible with continuous recharge/swap support."
         elif recharge_category == "recharge_bottleneck":
@@ -1051,9 +1140,9 @@ def _legacy_energy_planner_summary_html(summary: dict[str, object], area: Missio
         elif active_sets_required > 1 and active_inventory_sufficient:
             recharge_swap = "Battery swap between staged sets is required; no recharge is required if all required sets are available."
         elif active_sets_required > 1:
-            recharge_swap = "Battery swap or recharge sequencing is required to cover the conservative mission demand."
+            recharge_swap = "Battery swap or recharge sequencing is required to cover the stress mission demand."
         else:
-            recharge_swap = "No battery swap is required for the single conservative mission."
+            recharge_swap = "No battery swap is required for the single recommended planning mission."
 
     sections = [
         _summary_bullet("BLUF", bluf),
@@ -1090,19 +1179,19 @@ def results_html(summary: dict[str, object]) -> str:
             ]
         )
     if summary.get("mission_type") in PAYLOAD_MISSIONS and summary.get("route_distance_km") is not None:
-        detail_rows.append(("Payload route distance", f"{fmt1(summary.get('route_distance_km'))} km"))
-        detail_rows.append(("Payload route heading", f"{fmt1(summary.get('route_heading_deg'))} deg"))
+        detail_rows.append(("Route distance", f"{fmt1(summary.get('route_distance_km'))} km"))
+        detail_rows.append(("Route heading", f"{fmt1(summary.get('route_heading_deg'))} deg"))
     details = "".join(f"<div><strong>{key}:</strong> {value}</div>" for key, value in detail_rows)
     one_way_inventory = summary.get("vehicle_rechargeable") is False
-    inventory_required_label = "Vehicle units required at planning level" if one_way_inventory else "Battery sets required at planning level"
+    inventory_required_label = "Vehicle units required for recommended planning energy" if one_way_inventory else "Battery sets required for recommended planning energy"
     return f"""
     <div class='uuv-card full-width-card metoc-assessment metoc-panel'>
       <h2>Run Summary</h2>
       <p><strong>{summary.get("mission_type")}</strong> on <strong>{summary.get("platform")}</strong></p>
       <p>
-        Planning-level mission energy: <strong>{fmt1(summary.get('p80_energy_kwh'))} kWh (P80)</strong> |
+        Recommended planning energy: <strong>{fmt1(summary.get('recommended_planning_energy_kwh') or summary.get('planning_energy_kwh') or summary.get('p80_energy_kwh'))} kWh</strong> |
         Duration: <strong>{fmt1(summary.get('mean_duration_hr'))} hr</strong> |
-        {inventory_required_label}: <strong>{fmt_int(summary.get("battery_sets_required_p80"))} (P80)</strong> |
+        {inventory_required_label}: <strong>{fmt_int(summary.get("battery_sets_required_recommended") or summary.get("battery_sets_required_p80"))}</strong> |
         Inventory sufficient: <strong>{yesno(summary.get("battery_inventory_sufficient_no_recharge"))}</strong>
       </p>
       <div>{details}</div>
@@ -1174,8 +1263,8 @@ def _payload_total_distance_km(area: MissionArea, simulation_inputs: dict[str, o
 def build_energy_summary_rows(summary: dict[str, object]) -> list[tuple[str, object, str]]:
     """Build the compact energy summary table rows."""
     total_available = float(summary.get("total_available_kwh") or 0.0)
-    p80 = float(summary.get("p80_energy_kwh") or 0.0)
-    p95 = float(summary.get("p95_energy_kwh") or 0.0)
+    recommended = float(summary.get("recommended_planning_energy_kwh") or summary.get("planning_energy_kwh") or summary.get("p80_energy_kwh") or 0.0)
+    stress = float(summary.get("conservative_stress_energy_kwh") or summary.get("conservative_energy_kwh") or summary.get("p95_energy_kwh") or 0.0)
     environmental_multiplier = summary.get("isr_environmental_multiplier") or summary.get("environmental_multiplier") or ""
     total_uplift_pct: float | str = ""
     if environmental_multiplier not in ("", None):
@@ -1184,19 +1273,46 @@ def build_energy_summary_rows(summary: dict[str, object]) -> list[tuple[str, obj
         except (TypeError, ValueError):
             total_uplift_pct = ""
     rows = [
-        ("Expected mission energy (P50)", _float_or_blank(summary.get("p50_energy_kwh")), "kWh"),
-        ("Planning-level mission energy (P80)", p80, "kWh"),
-        ("Conservative mission energy (P95)", _float_or_blank(summary.get("p95_energy_kwh")), "kWh"),
+        ("Expected mission energy", _float_or_blank(summary.get("expected_energy_kwh") or summary.get("mean_energy_kwh")), "kWh"),
+        ("Modeled uncertainty allowance", _float_or_blank(summary.get("energy_uncertainty_allowance_kwh")), "kWh"),
+        ("Recommended planning energy", recommended, "kWh"),
+        ("Conservative stress estimate", stress, "kWh"),
+        ("Technical P50 simulated energy", _float_or_blank(summary.get("p50_energy_kwh")), "kWh"),
+        ("Technical P80 simulated energy", _float_or_blank(summary.get("p80_energy_kwh")), "kWh"),
+        ("Technical P95 simulated energy", _float_or_blank(summary.get("p95_energy_kwh")), "kWh"),
+        ("Recommendation basis", summary.get("recommendation_basis"), ""),
         ("Mission duration", _float_or_blank(summary.get("mean_duration_hr")), "hr"),
         ("Total environmental uplift", total_uplift_pct, "%"),
         ("Nominal average power", _float_or_blank(summary.get("nominal_average_power_kw")), "kW"),
-        ("Speed-adjusted power draw", _float_or_blank(summary.get("speed_adjusted_power_kw")), "kW"),
+        ("Speed-adjusted vehicle power", _float_or_blank(summary.get("speed_adjusted_power_kw")), "kW"),
         ("Hotel power component", _float_or_blank(summary.get("hotel_power_kw")), "kW"),
         ("Propulsion power component", _float_or_blank(summary.get("propulsion_power_kw")), "kW"),
         ("Low-speed power correction", _float_or_blank(summary.get("low_speed_penalty_kw")), "kW"),
+        ("Total active power draw P50", _float_or_blank(summary.get("total_active_power_p50_kw") or summary.get("power_draw_p50_kw")), "kW"),
+        ("Mission sensor-mode power, P50", _float_or_blank(summary.get("mission_sensor_power_p50_w")), "W"),
+        (
+            "Mission sensor-mode power range",
+            (
+                f"{fmt_int(summary.get('mission_sensor_power_p10_w'))}-{fmt_int(summary.get('mission_sensor_power_p90_w'))}"
+                if summary.get("mission_sensor_power_p10_w") not in (None, "")
+                else ""
+            ),
+            "W P10-P90",
+        ),
+        ("Mission sensor active duration", _float_or_blank(summary.get("active_sensor_duration_mean_hr")), "hr"),
+        ("Mission sensor-mode energy P50", _float_or_blank(summary.get("mission_sensor_energy_p50_kwh")), "kWh"),
+        ("Transit sensor-mode energy P50", _float_or_blank(summary.get("transit_sensor_energy_p50_kwh")), "kWh"),
+        (
+            "Search/MCM segment logic",
+            "Active search/survey only; added transit uses Route/Transit sensor mode."
+            if str(summary.get("mission_type") or "") in SEARCH_MISSIONS
+            else "",
+            "",
+        ),
+        ("Mission sensor-mode basis", summary.get("mission_sensor_power_basis"), ""),
         ("Minimum efficient speed", _float_or_blank(summary.get("min_efficient_speed_kts")), "kts"),
-        ("Planning-level energy margin (P80)", total_available - p80, "kWh"),
-        ("Conservative energy margin (P95)", total_available - p95, "kWh"),
+        ("Recommended planning energy margin", total_available - recommended, "kWh"),
+        ("Conservative stress energy margin", total_available - stress, "kWh"),
     ]
     hotel_fraction = _as_float(summary.get("hotel_power_fraction"))
     if hotel_fraction is not None:
@@ -1209,16 +1325,17 @@ def build_battery_sustainment_rows(summary: dict[str, object]) -> list[tuple[str
     usable_per_set = float(summary.get("usable_battery_per_set_kwh") or 0.0)
     nameplate = float(summary.get("battery_nameplate_kwh") or 0.0)
     reserve_energy = max(nameplate - usable_per_set, 0.0)
-    p80 = float(summary.get("p80_energy_kwh") or 0.0)
-    p95 = float(summary.get("p95_energy_kwh") or 0.0)
+    recommended = float(summary.get("recommended_planning_energy_kwh") or summary.get("planning_energy_kwh") or summary.get("p80_energy_kwh") or 0.0)
+    stress = float(summary.get("conservative_stress_energy_kwh") or summary.get("conservative_energy_kwh") or summary.get("p95_energy_kwh") or 0.0)
     total_available = float(summary.get("total_available_kwh") or 0.0)
     mission_type = str(summary.get("mission_type") or "")
-    shortfall_kwh = max(p80 - total_available, 0.0)
-    conservative_shortfall_kwh = max(p95 - total_available, 0.0)
-    conservative_sets_required = max(1, math.ceil(p95 / max(usable_per_set, 0.001)))
+    shortfall_kwh = max(recommended - total_available, 0.0)
+    conservative_shortfall_kwh = max(stress - total_available, 0.0)
+    recommended_sets_required = int(summary.get("battery_sets_required_recommended") or summary.get("battery_sets_required_recommended_planning") or max(1, math.ceil(recommended / max(usable_per_set, 0.001))))
+    conservative_sets_required = int(summary.get("battery_sets_required_stress") or summary.get("battery_sets_required_conservative_stress") or max(1, math.ceil(stress / max(usable_per_set, 0.001))))
     conservative_inventory_sufficient = conservative_shortfall_kwh <= 0.0
     planning_inventory_sufficient = shortfall_kwh <= 0.0
-    recharge_required = conservative_shortfall_kwh > 0.0
+    recharge_required = shortfall_kwh > 0.0
     one_way_inventory = summary.get("vehicle_rechargeable") is False
     inventory_unit = "units" if one_way_inventory else "sets"
     rows = [
@@ -1231,13 +1348,13 @@ def build_battery_sustainment_rows(summary: dict[str, object]) -> list[tuple[str
         ("Vehicle units available" if one_way_inventory else "Battery sets available", summary.get("battery_sets_available"), inventory_unit),
         ("Total available energy", total_available, "kWh"),
         ("Nameplate-to-usable allowance per unit" if one_way_inventory else "Nameplate-to-usable allowance per set", reserve_energy if reserve_energy > 0 else "", "kWh"),
-        ("One-way vehicle inventory required at conservative level (P95)" if one_way_inventory else "Battery sets required at conservative level (P95)", conservative_sets_required, inventory_unit),
-        ("One-way vehicle inventory required at planning level (P80)" if one_way_inventory else "Battery sets required at planning level (P80)", summary.get("battery_sets_required_p80"), inventory_unit),
-        ("Conservative shortfall (P95)", conservative_shortfall_kwh, "kWh"),
-        ("Planning-level shortfall (P80)", shortfall_kwh, "kWh"),
-        ("Replacement inventory required at conservative level" if one_way_inventory else "Recharge/swap required at conservative level", _yes_no(recharge_required), ""),
-        ("Conservative vehicle inventory sufficient (P95)" if one_way_inventory else "Conservative battery inventory sufficient (P95)", _yes_no(conservative_inventory_sufficient), ""),
-        ("Planning-level vehicle inventory sufficient (P80)" if one_way_inventory else "Planning-level battery inventory sufficient (P80)", _yes_no(planning_inventory_sufficient), ""),
+        ("One-way vehicle inventory required for recommended planning energy" if one_way_inventory else "Battery sets required for recommended planning energy", recommended_sets_required, inventory_unit),
+        ("One-way vehicle inventory required for conservative stress estimate" if one_way_inventory else "Battery sets required for conservative stress estimate", conservative_sets_required, inventory_unit),
+        ("Planning-level shortfall", shortfall_kwh, "kWh"),
+        ("Conservative shortfall", conservative_shortfall_kwh, "kWh"),
+        ("Replacement inventory required for recommended planning energy" if one_way_inventory else "Recharge/swap required for recommended planning energy", _yes_no(recharge_required), ""),
+        ("Conservative vehicle inventory sufficient" if one_way_inventory else "Conservative battery inventory sufficient", _yes_no(conservative_inventory_sufficient), ""),
+        ("Planning-level vehicle inventory sufficient" if one_way_inventory else "Planning-level battery inventory sufficient", _yes_no(planning_inventory_sufficient), ""),
         ("Recharge feasibility status", summary.get("recharge_feasibility_status"), ""),
     ]
     if one_way_inventory:
@@ -1291,7 +1408,7 @@ def build_sustainment_projection_rows(summary: dict[str, object]) -> list[tuple[
         ("Planning horizon", _float_or_blank(summary.get("sustainment_planning_weeks")), "weeks"),
         ("Operations per week", _float_or_blank(summary.get("sustainment_missions_per_week")), "missions"),
         ("Total projected missions", _float_or_blank(summary.get("sustainment_total_missions")), "missions"),
-        ("Conservative energy per mission", _float_or_blank(summary.get("sustainment_conservative_energy_per_mission_kwh")), "kWh"),
+        ("Recommended planning energy per mission", _float_or_blank(summary.get("sustainment_conservative_energy_per_mission_kwh")), "kWh"),
         ("Total mission energy throughput", _float_or_blank(summary.get("sustainment_total_conservative_energy_kwh")), "kWh"),
         ("Usable inventory energy per cycle", _float_or_blank(summary.get("sustainment_usable_inventory_energy_per_cycle_kwh")), "kWh"),
         ("Replacement inventory units required" if one_way_inventory else "Inventory cycles required", _float_or_blank(summary.get("sustainment_inventory_cycles_required")), "units" if one_way_inventory else "cycles"),
@@ -1330,7 +1447,10 @@ def build_mission_geometry_summary_rows(
             ("Number of search areas", summary.get("number_of_search_areas", len(area.areas)), "areas"),
             ("Total search area", _float_or_blank(summary.get("total_search_area_km2", area.total_area_km2)), "sq km"),
             ("Track spacing", _float_or_blank(simulation_inputs.get("track_spacing_m") or summary.get("track_spacing_m")), "m"),
-            ("Estimated lane/route burden", _float_or_blank(summary.get("search_total_distance_km")), "km"),
+            ("Active search/survey distance", _float_or_blank(summary.get("search_active_survey_distance_km") or summary.get("search_track_distance_km")), "km"),
+            ("Additional transit distance", _float_or_blank(summary.get("search_additional_transit_distance_km") or summary.get("additional_transit_km")), "km"),
+            ("Active search/survey duration", _float_or_blank(summary.get("search_active_survey_duration_mean_hr")), "hr"),
+            ("Additional transit duration", _float_or_blank(summary.get("search_additional_transit_duration_mean_hr")), "hr"),
             ("METOC sampled points", summary.get("metoc_sample_count", len(area.representative_points)), "points"),
             ("METOC aggregation method", summary.get("metoc_aggregation_method", "area-centroid vector average"), ""),
         ]
@@ -1339,9 +1459,9 @@ def build_mission_geometry_summary_rows(
             ("Route distance", _float_or_blank(area.route_distance_km or summary.get("route_distance_km")), "km"),
             ("Recovery mode", "Return to start" if summary.get("payload_recovery_mode") == "return_to_start" else "One-way / no return", ""),
             ("Total modeled distance", _float_or_blank(summary.get("payload_total_modeled_distance_km")), "km"),
-            ("Payload weight", _nonzero_float(summary.get("payload_weight_kg")), "kg"),
+            ("Carried equipment weight", _nonzero_float(summary.get("payload_weight_kg")), "kg"),
             (
-                "Payload carriage penalty",
+                "Equipment carriage penalty",
                 f"{fmt1(summary.get('payload_weight_penalty_pct'), '%')} trim/integration planning burden applied to outbound propulsion energy"
                 if _as_float(summary.get("payload_weight_penalty_pct")) and (_as_float(summary.get("payload_weight_penalty_pct")) or 0) > 0
                 else "",
@@ -1381,7 +1501,10 @@ def build_mission_geometry_summary_rows(
             ("Number of search areas", summary.get("number_of_search_areas", 1), "areas"),
             ("Track spacing", _float_or_blank(simulation_inputs.get("track_spacing_m") or summary.get("track_spacing_m")), "m"),
             ("Recommended orientation", orientation, ""),
-            ("Estimated lane/route burden", _float_or_blank(summary.get("search_total_distance_km") or summary.get("search_track_distance_km")), "km"),
+            ("Active search/survey distance", _float_or_blank(summary.get("search_active_survey_distance_km") or summary.get("search_track_distance_km")), "km"),
+            ("Additional transit distance", _float_or_blank(summary.get("search_additional_transit_distance_km") or summary.get("additional_transit_km")), "km"),
+            ("Active search/survey duration", _float_or_blank(summary.get("search_active_survey_duration_mean_hr")), "hr"),
+            ("Additional transit duration", _float_or_blank(summary.get("search_additional_transit_duration_mean_hr")), "hr"),
             ("METOC sampled points", summary.get("metoc_sample_count", 1), "points"),
             ("METOC aggregation method", summary.get("metoc_aggregation_method"), ""),
             ("METOC lookup point", _metoc_lookup_point(environment, area, "area centroid"), ""),
@@ -1457,7 +1580,7 @@ def build_energy_equivalence_rows(
 
     rows = [
         ["Planning basis", planning_basis],
-        ["Conservative planning energy", f"{fmt1(planning_energy_kwh)} kWh"],
+        ["Energy value", f"{fmt1(planning_energy_kwh)} kWh"],
         ["Watt-hours", f"{wh:,.0f} Wh"],
         ["Joules", f"{joules:,.0f} J"],
         ["Megajoules", f"{mj:,.1f} MJ"],
@@ -1573,7 +1696,7 @@ def context_markdown(context: dict[str, Any]) -> str:
             lookup_lat = float(area_data.get("centroid_lat")) if area_data.get("centroid_lat") is not None else None
             lookup_lon = float(area_data.get("centroid_lon")) if area_data.get("centroid_lon") is not None else None
         geom = (
-            f"**Mission loaded:** Payload Delivery  \n"
+            f"**Mission loaded:** {mission_type}  \n"
             f"**Geometry:** Route  \n"
             f"**Route distance:** {fmt1(area_data.get('route_distance_km'))} km  \n"
             f"**Route heading:** {fmt1(area_data.get('route_heading_deg'))} deg  \n"
@@ -1721,7 +1844,7 @@ def build_energy_time_chart(
 
 def build_distribution_chart(
     energy_arr: np.ndarray,
-    p80: float,
+    recommended_energy_kwh: float,
     usable_total_kwh: float,
     mission_type: str = "",
     inventory_label: str = "Battery inventory",
@@ -1730,17 +1853,19 @@ def build_distribution_chart(
     fig, ax = plt.subplots(figsize=(9.5, 4.8), dpi=120)
     p05 = float(np.percentile(energy_arr, 5))
     p50 = float(np.percentile(energy_arr, 50))
-    p95 = float(np.percentile(energy_arr, 95))
+    sorted_energy = np.sort(energy_arr)
+    tail_count = max(1, int(math.ceil(0.10 * sorted_energy.size)))
+    stress_energy_kwh = float(np.mean(sorted_energy[-tail_count:]))
     p01 = float(np.percentile(energy_arr, 1))
     p99 = float(np.percentile(energy_arr, 99))
     spread = max(p99 - p01, abs(p50) * 0.02, 0.002)
-    xmin = max(0.0, min(p01, p80, p05) - spread * 0.75)
-    xmax = max(p99, p80, p95) + spread * 0.75
+    xmin = max(0.0, min(p01, recommended_energy_kwh, p05) - spread * 0.75)
+    xmax = max(p99, recommended_energy_kwh, stress_energy_kwh) + spread * 0.75
     bins = min(24, max(10, int(np.sqrt(energy_arr.size) * 1.8)))
     ax.hist(energy_arr, bins=bins, alpha=0.82, edgecolor="black", linewidth=0.25)
-    ax.axvline(p50, linestyle="-", linewidth=2, label=f"Expected energy (P50): {fmt1(p50)} kWh")
-    ax.axvline(p80, linestyle="--", linewidth=2, label=f"Planning-level energy (P80): {fmt1(p80)} kWh")
-    ax.axvline(p95, linestyle=":", linewidth=2, label=f"Conservative energy (P95): {fmt1(p95)} kWh")
+    ax.axvline(p50, linestyle="-", linewidth=2, label=f"Expected: {fmt1(p50)} kWh")
+    ax.axvline(recommended_energy_kwh, linestyle="--", linewidth=2, label=f"Recommended: {fmt1(recommended_energy_kwh)} kWh")
+    ax.axvline(stress_energy_kwh, linestyle=":", linewidth=2, label=f"Stress estimate: {fmt1(stress_energy_kwh)} kWh")
     if xmin <= usable_total_kwh <= xmax:
         ax.axvline(usable_total_kwh, linestyle="-.", linewidth=2, label=f"{inventory_label}: {fmt1(usable_total_kwh)} kWh")
     else:
@@ -1752,7 +1877,7 @@ def build_distribution_chart(
     ax.set_title(title)
     ax.grid(True, alpha=0.25)
     ax.legend(loc="upper left", fontsize=9)
-    if (p95 - p05) < max(0.01, p50 * 0.01):
+    if (stress_energy_kwh - p05) < max(0.01, p50 * 0.01):
         fig.text(
             0.5,
             0.02,
@@ -1938,7 +2063,7 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea |
         route_points = _project_route_points(area)
         xs = [point[0] for point in route_points]
         ys = [point[1] for point in route_points]
-        ax.plot(xs, ys, color="#075985", linewidth=2.5, marker="o", markersize=4, label="Payload route")
+        ax.plot(xs, ys, color="#075985", linewidth=2.5, marker="o", markersize=4, label="Route / transit path")
         ax.scatter([xs[0]], [ys[0]], s=70, color="#16a34a", edgecolor="white", linewidth=0.8, zorder=5, label="Start")
         ax.scatter([xs[-1]], [ys[-1]], s=85, marker="*", color="#dc2626", edgecolor="white", linewidth=0.8, zorder=6, label="Target")
         bounds = _set_limits(ax, route_points, equal_aspect=True)

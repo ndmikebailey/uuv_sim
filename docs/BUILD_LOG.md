@@ -2,7 +2,7 @@
 
 Configuration-controlled build history for the UUV mission planning and energy simulation tool.
 
-Current active build: **v3.5-beta**  
+Current active build: **v4-beta**  
 Date established: **2026-05-04**  
 Current entrypoint: `app/main.py` with Hugging Face compatibility launcher `app.py`
 

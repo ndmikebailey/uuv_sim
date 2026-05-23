@@ -198,18 +198,18 @@ class AppCallbackSmokeTests(unittest.TestCase):
                 self.assertIn("Endurance per set", str(result[11]))
                 executive_summary = self._executive_summary_text(result[11])
                 self.assertLess(executive_summary.index("The modeled ISR mission"), executive_summary.index("Monte Carlo"))
-                self.assertIn("100 Monte Carlo trials", executive_summary)
+                self.assertIn("1000 Monte Carlo trials", executive_summary)
                 self.assertIn("using deterministic seed 12345", executive_summary)
                 self.assertIn("mission-total endurance case", executive_summary)
                 self.assertIn("kWh per loop", executive_summary)
                 self.assertIn("percentile outputs are retained in technical traceability", executive_summary)
                 self.assertIn("Monte Carlo runs", str(result[11]))
-                self.assertIn("Percentile output definitions", str(result[11]))
+                self.assertIn("Technical percentile traceability", str(result[11]))
                 self.assertNotIn("None", executive_summary)
                 self.assertNotIn("Battery sets P80", str(result[11]))
                 self.assertNotIn("Battery sets P95", str(result[11]))
                 self.assertNotIn("Available battery inventory", str(result[11]))
-                self.assertIn("Conservative mission energy estimate (P95)", str(result[12]))
+                self.assertIn("Conservative stress estimate", str(result[12]))
                 self.assertIn("Barrel-of-oil equivalent", str(result[12]))
                 self.assertEqual(result[8]["visible"], True)
                 self.assertEqual(result[9]["visible"], True)
@@ -261,14 +261,14 @@ class AppCallbackSmokeTests(unittest.TestCase):
         executive_summary = self._executive_summary_text(result[11])
         self.assertIn("Executive Results Summary", executive_summary)
         self.assertLess(executive_summary.index("The modeled search/MCM mission"), executive_summary.index("Monte Carlo"))
-        self.assertIn("Planning energy is", executive_summary)
-        self.assertIn("conservative energy is", executive_summary)
-        self.assertIn("route/track current burden", executive_summary)
+        self.assertIn("Recommended planning energy is", executive_summary)
+        self.assertIn("conservative stress estimate is", executive_summary)
+        self.assertIn("search-track current burden", executive_summary)
         self.assertNotIn("None", executive_summary)
-        self.assertIn("Battery sets P80", str(result[11]))
-        self.assertIn("Battery sets P95", str(result[11]))
+        self.assertIn("Battery sets recommended", str(result[11]))
+        self.assertIn("Battery sets stress", str(result[11]))
         self.assertNotIn("METOC risk", str(result[11]))
-        self.assertIn("Conservative mission energy estimate (P95)", str(result[12]))
+        self.assertIn("Conservative stress estimate", str(result[12]))
         self.assertEqual(result[8]["visible"], True)
         self.assertEqual(result[9]["visible"], True)
         self.assertIn("Mission Map Overlay", str(result[9]["value"]))
@@ -418,7 +418,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertNotIn("Not feasible", str(result[11]))
         executive_summary = self._executive_summary_text(result[11])
         self.assertLess(executive_summary.index("The modeled ISR mission"), executive_summary.index("Monte Carlo"))
-        self.assertIn("100 Monte Carlo trials", executive_summary)
+        self.assertIn("1000 Monte Carlo trials", executive_summary)
         self.assertIn("using deterministic seed 12345", executive_summary)
         self.assertIn("mission-total endurance case", executive_summary)
         self.assertIn("declared inventory supports", executive_summary)
@@ -474,12 +474,12 @@ class AppCallbackSmokeTests(unittest.TestCase):
             "sustainment_generator_efficiency": 0.84,
         }
         rows = {label: value for label, value, _ in build_battery_sustainment_rows(summary)}
-        self.assertAlmostEqual(rows["Planning-level shortfall (P80)"], 0.4)
-        self.assertAlmostEqual(rows["Conservative shortfall (P95)"], 0.6)
-        self.assertEqual(rows["Planning-level battery inventory sufficient (P80)"], "No")
-        self.assertEqual(rows["Conservative battery inventory sufficient (P95)"], "No")
-        self.assertEqual(rows["Battery sets required at planning level (P80)"], 2)
-        self.assertEqual(rows["Battery sets required at conservative level (P95)"], 2)
+        self.assertAlmostEqual(rows["Planning-level shortfall"], 0.4)
+        self.assertAlmostEqual(rows["Conservative shortfall"], 0.6)
+        self.assertEqual(rows["Planning-level battery inventory sufficient"], "No")
+        self.assertEqual(rows["Conservative battery inventory sufficient"], "No")
+        self.assertEqual(rows["Battery sets required for recommended planning energy"], 2)
+        self.assertEqual(rows["Battery sets required for conservative stress estimate"], 2)
         self.assertIn("Nameplate-to-usable allowance per set", rows)
         self.assertNotIn("Reserve energy per set", rows)
 
@@ -503,8 +503,8 @@ class AppCallbackSmokeTests(unittest.TestCase):
             "sustainment_generator_kwh_per_gallon": 10.0,
         }
         helper = build_battery_detail_helper(summary)
-        self.assertIn("P80 uses 103.0% of inventory", helper)
-        self.assertIn("P95 uses 104.5%", helper)
+        self.assertIn("Recommended uses 103.0% of inventory", helper)
+        self.assertIn("stress estimate uses 104.5%", helper)
         self.assertIn("Visual gauge capped at 100%", helper)
         sustainment_rows = {label: value for label, value, _ in build_sustainment_projection_rows(summary)}
         self.assertEqual(sustainment_rows["Generator efficiency"], "84%")
@@ -676,7 +676,9 @@ class AppCallbackSmokeTests(unittest.TestCase):
             {},
         )
         status = str(result[0])
-        self.assertIn("Planning-level battery sets required", status)
+        self.assertIn("Battery sets required", status)
+        self.assertIn("Recommended planning energy", status)
+        self.assertIn("Conservative stress estimate", status)
         self.assertIn("recharge cycle is a bottleneck under current assumptions", status)
 
     def test_isr_run_status_uses_endurance_language_not_generic_bottleneck(self) -> None:
@@ -736,7 +738,9 @@ class AppCallbackSmokeTests(unittest.TestCase):
         status = str(result[0])
         report_text = " ".join(str(result[index]) for index in (2, 3, 11))
         normal_output = f"{status} {report_text}"
-        self.assertIn("Planning-level vehicle units required", status)
+        self.assertIn("Vehicle units required", status)
+        self.assertIn("Recommended planning energy", status)
+        self.assertIn("Conservative stress estimate", status)
         self.assertIn("Vehicle inventory", normal_output)
         self.assertIn("one-way inventory", normal_output)
         self.assertNotIn("recharge/swap sequence required", normal_output)
@@ -779,7 +783,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertLess(str(payload_run[11]).index("BLUF"), str(payload_run[11]).index("Executive Results Summary"))
         self.assertLess(str(payload_run[11]).index("Executive Results Summary"), str(payload_run[11]).index("Technical Traceability / Model Detail"))
         self.assertIn("Energy Detail", str(payload_run[2]))
-        self.assertIn("Speed-adjusted power draw", str(payload_run[2]))
+        self.assertIn("Speed-adjusted vehicle power", str(payload_run[2]))
         self.assertIn("Hotel power component", str(payload_run[2]))
         self.assertIn("section-insight-card", str(payload_run[2]))
         self.assertIn("report-table", str(payload_run[2]))
@@ -800,19 +804,19 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertNotIn("Payload mission planning", str(payload_run[11]))
         executive_summary = self._executive_summary_text(payload_run[11])
         self.assertIn("Executive Results Summary", executive_summary)
-        self.assertLess(executive_summary.index("The modeled payload mission"), executive_summary.index("Monte Carlo"))
-        self.assertIn("100 Monte Carlo trials", executive_summary)
+        self.assertLess(executive_summary.index("The modeled route/transit mission"), executive_summary.index("Monte Carlo"))
+        self.assertIn("1000 Monte Carlo trials", executive_summary)
         self.assertIn("using deterministic seed 12345", executive_summary)
-        self.assertIn("Planning energy is", executive_summary)
-        self.assertIn("conservative energy is", executive_summary)
+        self.assertIn("Recommended planning energy is", executive_summary)
+        self.assertIn("conservative stress estimate is", executive_summary)
         self.assertIn("return transit distance and route current", executive_summary)
         self.assertIn("Return-to-start planning increases modeled distance", executive_summary)
-        self.assertIn("Percentile output definitions", str(payload_run[11]))
+        self.assertIn("Technical percentile traceability", str(payload_run[11]))
         self.assertNotIn("None", executive_summary)
-        self.assertIn("Planning energy P80", str(payload_run[11]))
-        self.assertIn("Conservative energy P95", str(payload_run[11]))
-        self.assertIn("Battery sets P80", str(payload_run[11]))
-        self.assertIn("Battery sets P95", str(payload_run[11]))
+        self.assertIn("Recommended planning energy", str(payload_run[11]))
+        self.assertIn("Conservative stress estimate", str(payload_run[11]))
+        self.assertIn("Battery sets recommended", str(payload_run[11]))
+        self.assertIn("Battery sets stress", str(payload_run[11]))
         self.assertNotIn("METOC risk", str(payload_run[11]))
         self.assertNotIn("dry-weight", str(payload_run[4]).lower())
         self.assertNotIn("dry weight", str(payload_run[4]).lower())
@@ -938,7 +942,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
 
     def test_mission_input_visibility_separates_modes(self) -> None:
         """Search, payload, and ISR groups should be mutually exclusive."""
-        search_update, payload_update, isr_update, sequence_update = main.mission_input_visibility("Payload Delivery")
+        search_update, payload_update, isr_update, sequence_update = main.mission_input_visibility("Route / Transit")
         self.assertEqual(search_update["visible"], False)
         self.assertEqual(payload_update["visible"], True)
         self.assertEqual(isr_update["visible"], False)
@@ -956,6 +960,139 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertEqual(payload_update["visible"], False)
         self.assertEqual(isr_update["visible"], False)
         self.assertEqual(sequence_update["visible"], True)
+
+    def test_simulation_mode_controls_are_mutually_exclusive(self) -> None:
+        """Monte Carlo mode should be the default and deterministic mode should hide stochastic controls."""
+        self.assertEqual(main.MONTE_CARLO_MODE, "Monte Carlo run")
+        self.assertEqual(main.DEFAULT_MONTE_CARLO_RUNS, 1000)
+
+        deterministic, runs = main.resolve_simulation_mode(main.MONTE_CARLO_MODE, "")
+        self.assertFalse(deterministic)
+        self.assertEqual(runs, 1000)
+
+        deterministic, runs = main.resolve_simulation_mode(main.MONTE_CARLO_MODE, 5)
+        self.assertFalse(deterministic)
+        self.assertEqual(runs, 10)
+
+        deterministic, runs = main.resolve_simulation_mode(main.DETERMINISTIC_MODE, 1000)
+        self.assertTrue(deterministic)
+        self.assertEqual(runs, 1)
+
+        mc_runs_update, seed_update = main.simulation_mode_visibility(main.MONTE_CARLO_MODE)
+        self.assertEqual(mc_runs_update["visible"], True)
+        self.assertEqual(mc_runs_update["interactive"], True)
+        self.assertEqual(seed_update["visible"], True)
+        self.assertEqual(seed_update["interactive"], True)
+
+        mc_runs_update, seed_update = main.simulation_mode_visibility(main.DETERMINISTIC_MODE)
+        self.assertEqual(mc_runs_update["visible"], False)
+        self.assertEqual(mc_runs_update["interactive"], False)
+        self.assertEqual(seed_update["visible"], False)
+        self.assertEqual(seed_update["interactive"], False)
+
+    def test_simulation_mode_seed_and_status_contract(self) -> None:
+        """Run mode should control run count and seed traceability without percentile-led status wording."""
+        generated = main.run_from_ui(
+            "REMUS 300 - 4.5 kWh",
+            "Route / Transit",
+            10,
+            3,
+            3,
+            10,
+            0,
+            0,
+            200,
+            True,
+            3.5,
+            1,
+            True,
+            1,
+            "",
+            0.5,
+            90,
+            25,
+            {},
+            "Medium",
+            1,
+            "1 week",
+            0.84,
+            0,
+            False,
+            main.MONTE_CARLO_MODE,
+            10,
+        )
+        self.assertIn("Recommended planning energy:", str(generated[0]))
+        self.assertIn("Conservative stress estimate:", str(generated[0]))
+        self.assertNotIn("P80", str(generated[0]))
+        self.assertNotIn("P95", str(generated[0]))
+        self.assertIsNone(generated[10]["rng_seed_requested"])
+        self.assertIsNotNone(generated[10]["rng_seed_used"])
+        self.assertEqual(generated[10]["monte_carlo_runs"], 10)
+
+        provided = main.run_from_ui(
+            "REMUS 300 - 4.5 kWh",
+            "Route / Transit",
+            10,
+            3,
+            3,
+            10,
+            0,
+            0,
+            200,
+            True,
+            3.5,
+            1,
+            True,
+            1,
+            "12345",
+            0.5,
+            90,
+            25,
+            {},
+            "Medium",
+            1,
+            "1 week",
+            0.84,
+            0,
+            False,
+            main.MONTE_CARLO_MODE,
+            10,
+        )
+        self.assertEqual(provided[10]["rng_seed_requested"], 12345)
+        self.assertEqual(provided[10]["rng_seed_used"], 12345)
+
+        deterministic = main.run_from_ui(
+            "REMUS 300 - 4.5 kWh",
+            "Route / Transit",
+            10,
+            3,
+            3,
+            10,
+            0,
+            0,
+            200,
+            True,
+            3.5,
+            1,
+            True,
+            1,
+            "-1",
+            0.5,
+            90,
+            25,
+            {},
+            "Medium",
+            1,
+            "1 week",
+            0.84,
+            0,
+            False,
+            main.DETERMINISTIC_MODE,
+            1000,
+        )
+        self.assertEqual(deterministic[10]["simulation_mode"], main.DETERMINISTIC_MODE)
+        self.assertEqual(deterministic[10]["monte_carlo_runs"], 1)
+        self.assertNotIn("Invalid seed", str(deterministic[0]))
 
     def test_sustainment_projection_controls_are_optional(self) -> None:
         """Sustainment projection inputs should stay hidden until requested."""
@@ -1112,7 +1249,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertEqual(result[9]["visible"], False)
         self.assertNotIn("Mission Map Overlay", str(result[9].get("value", "")))
         executive_summary = self._executive_summary_text(result[11])
-        self.assertIn("without a fixed deterministic seed", executive_summary)
+        self.assertIn("generated seed recorded for traceability", executive_summary)
         self.assertNotIn("None", executive_summary)
 
 

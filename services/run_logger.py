@@ -36,6 +36,12 @@ ENERGY_PLANNER_CSV_FIELDS = [
     "payload_weight_multiplier",
     "payload_weight_penalty_basis",
     "launch_recovery_energy_kwh",
+    "mission_sensor_power_mean_kw",
+    "mission_sensor_power_p10_kw",
+    "mission_sensor_power_p50_kw",
+    "mission_sensor_power_p90_kw",
+    "mission_sensor_power_basis",
+    "active_sensor_mode",
     "mission_duration_hr",
     "route_distance_km",
     "additional_transit_km",
@@ -156,8 +162,8 @@ def _payload_total_distance_km(area: MissionArea, simulation_inputs: dict[str, A
 
 def _planner_note(mission_type: str, summary: dict[str, Any], simulation_inputs: dict[str, Any]) -> str:
     """Return a short mission-specific sustainment note."""
-    if mission_type in {"Payload", "Payload Delivery", "Delivery"}:
-        return "Payload energy reflects route distance, recovery mode, payload weight, launch/recovery overhead when applicable, current, and added transit."
+    if mission_type in {"Payload", "Payload Delivery", "Delivery", "Route / Transit", "Endurance / Transit", "Transit"}:
+        return "Route/transit energy reflects route distance, recovery mode, carried equipment weight, launch/recovery overhead when applicable, current, added transit, and low-burden sensor-mode uncertainty."
     if mission_type in {"ISR", "Intelligence, Surveillance, and Reconnaissance"}:
         return "ISR reports maximum endurance-based time on station before recovery or battery swap."
     if mission_type in {"Area Search / MCM", "Area Search", "MCM", "Mine Countermeasures", "Search"}:
@@ -185,7 +191,7 @@ def build_energy_planner_csv_row(
     if not isinstance(simulation_inputs, dict):
         simulation_inputs = {}
 
-    is_payload = mission_type in {"Payload", "Payload Delivery", "Delivery"}
+    is_payload = mission_type in {"Payload", "Payload Delivery", "Delivery", "Route / Transit", "Endurance / Transit", "Transit"}
     is_isr = mission_type in {"ISR", "Intelligence, Surveillance, and Reconnaissance"}
     is_search = mission_type in {"Area Search / MCM", "Area Search", "MCM", "Mine Countermeasures", "Search"}
 
@@ -233,6 +239,12 @@ def build_energy_planner_csv_row(
             "geometry_type": area.geometry_type,
             "platform_name": vehicle.name,
             "battery_configuration": f"{int(summary.get('battery_sets_available') or 0)} set(s), {usable_per_set:.2f} kWh usable per set",
+            "mission_sensor_power_mean_kw": _number(summary.get("mission_sensor_power_mean_kw")),
+            "mission_sensor_power_p10_kw": _number(summary.get("mission_sensor_power_p10_kw")),
+            "mission_sensor_power_p50_kw": _number(summary.get("mission_sensor_power_p50_kw")),
+            "mission_sensor_power_p90_kw": _number(summary.get("mission_sensor_power_p90_kw")),
+            "mission_sensor_power_basis": summary.get("mission_sensor_power_basis", ""),
+            "active_sensor_mode": summary.get("active_sensor_mode", ""),
             "mission_duration_hr": _number(summary.get("mean_duration_hr")),
             "additional_transit_km": _number(simulation_inputs.get("additional_transit_km")),
             "usable_battery_per_set_kwh": usable_per_set,
