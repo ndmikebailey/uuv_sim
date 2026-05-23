@@ -130,6 +130,14 @@
       "recharge_hr": 0.0,
       "source_confidence": "validated_public_project_notes"
     },
+    "REMUS 600 / MK18 Mod 2 Kingfish legacy proxy": {
+      "battery_kwh": 5.2,
+      "endurance_hr": 24.0,
+      "nominal_speed_kts": 3.0,
+      "max_speed_kts": 5.0,
+      "recharge_hr": 20.8,
+      "source_confidence": "interpreted_public_specs_standard_battery"
+    },
     "MK20 Mod 0 Razorback (TTL&R)": {
       "battery_kwh": 5.2,
       "endurance_hr": 18.4,
