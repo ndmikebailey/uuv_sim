@@ -344,7 +344,7 @@ def compute_energy_recommendation_metrics(
     upper_tail_fraction = 0.10
     recommendation_basis = (
         "Mean simulated energy plus one standard deviation; validation-adjusted value used only when provided. "
-        "Conservative stress estimate is the average of the upper 10% of Monte Carlo energy outcomes."
+        "Stress case is the average of the upper 10% of Monte Carlo energy outcomes."
     )
     if samples.size == 0:
         expected = 0.0
@@ -1028,13 +1028,10 @@ def run_energy_simulation(
         ("Platform", vehicle.name, ""),
         ("Mission type", mission_type, ""),
         ("Mission sequences", mission_sequences, "runs"),
-        ("Expected mission energy", expected_energy, "kWh"),
-        ("Modeled uncertainty allowance", recommendation_metrics["energy_uncertainty_allowance_kwh"], "kWh"),
-        ("Recommended planning energy", recommended_planning_energy, "kWh"),
-        ("Conservative stress estimate", conservative_stress_energy, "kWh"),
-        ("Technical P50 energy required", p50, "kWh"),
-        ("Technical P80 energy required", p80, "kWh"),
-        ("Technical P95 energy required", p95, "kWh"),
+        ("Expected energy", expected_energy, "kWh"),
+        ("Uncertainty allowance", recommendation_metrics["energy_uncertainty_allowance_kwh"], "kWh"),
+        ("Planning recommendation", recommended_planning_energy, "kWh"),
+        ("Stress case", conservative_stress_energy, "kWh"),
         ("Mean mission duration", mean_duration, "hr"),
         ("Battery nameplate capacity", vehicle.battery_kwh, "kWh"),
         ("Usable planning energy per vehicle unit" if one_way_inventory else "Usable planning energy per set", usable_battery_per_set, "kWh"),
@@ -1043,22 +1040,22 @@ def run_energy_simulation(
         ("Operator reserve fraction", reserve_fraction, ""),
         ("Usable battery basis", vehicle.usable_basis, ""),
         ("Nominal average power", input_power_breakdown.nominal_power_kw, "kW"),
-        ("Speed-adjusted vehicle power", input_power_breakdown.total_power_kw, "kW"),
+        ("Speed-adjusted power", input_power_breakdown.total_power_kw, "kW"),
         ("Hotel power component", input_power_breakdown.hotel_power_kw, "kW"),
         ("Propulsion power component", input_power_breakdown.propulsion_power_kw, "kW"),
         ("Low-speed power correction", input_power_breakdown.low_speed_penalty_kw, "kW"),
-        ("Mission sensor-mode power, P50", summary["mission_sensor_power_p50_w"], "W"),
+        ("Sensor load", summary["mission_sensor_power_p50_w"], "W"),
         (
-            "Mission sensor-mode power range",
+            "Sensor load range",
             f"{summary['mission_sensor_power_p10_w']:.0f}-{summary['mission_sensor_power_p90_w']:.0f}",
-            "W P10-P90",
+            "W",
         ),
         ("Mission sensor active duration", summary["active_sensor_duration_mean_hr"], "hr"),
-        ("Mission sensor-mode energy P50", summary["mission_sensor_energy_p50_kwh"], "kWh"),
-        ("Transit sensor-mode energy P50", summary["transit_sensor_energy_p50_kwh"], "kWh"),
-        ("Mission sensor-mode basis", summary["mission_sensor_power_basis"], ""),
+        ("Sensor energy", summary["mission_sensor_energy_p50_kwh"], "kWh"),
+        ("Transit sensor energy", summary["transit_sensor_energy_p50_kwh"], "kWh"),
+        ("Sensor-load basis", summary["mission_sensor_power_basis"], ""),
         (
-            "Search/MCM segment logic",
+            "Sensor-use logic",
             "Active search/survey receives Search/MCM sensor-mode power; added transit receives Route/Transit sensor-mode power."
             if mission_type in SEARCH_MISSIONS
             else "",
@@ -1071,10 +1068,10 @@ def run_energy_simulation(
         ("Vehicle units on hand" if one_way_inventory else "Battery sets on hand", battery_sets_available, inventory_unit_plural),
         ("Vehicle inventory sufficiency" if one_way_inventory else "Battery inventory without recharge", "Sufficient" if battery_shortfall_recommended == 0 else "Not sufficient", ""),
         ("Vehicle inventory sufficiency across Monte Carlo runs" if one_way_inventory else "Battery inventory sufficiency across Monte Carlo runs", inventory_probability, "%"),
-        ("Vehicle units required for recommended planning energy" if one_way_inventory else "Battery sets required for recommended planning energy", battery_sets_required_recommended, inventory_unit_plural),
-        ("Vehicle units required for conservative stress estimate" if one_way_inventory else "Battery sets required for conservative stress estimate", battery_sets_required_stress, inventory_unit_plural),
-        ("Vehicle inventory shortfall for recommended planning energy" if one_way_inventory else "Battery shortfall for recommended planning energy", battery_shortfall_recommended, inventory_unit_plural),
-        ("Vehicle inventory shortfall for conservative stress estimate" if one_way_inventory else "Battery shortfall for conservative stress estimate", battery_shortfall_stress, inventory_unit_plural),
+        ("Vehicle units needed" if one_way_inventory else "Battery sets needed", battery_sets_required_recommended, inventory_unit_plural),
+        ("Stress-case vehicle units" if one_way_inventory else "Stress-case battery sets", battery_sets_required_stress, inventory_unit_plural),
+        ("Vehicle inventory shortfall" if one_way_inventory else "Battery shortfall", battery_shortfall_recommended, inventory_unit_plural),
+        ("Stress-case vehicle shortfall" if one_way_inventory else "Stress-case battery shortfall", battery_shortfall_stress, inventory_unit_plural),
         ("Replacement inventory units required" if one_way_inventory else "Recharge / swap sequences required", battery_shortfall_recommended if one_way_inventory else recharge_sequences_required, inventory_unit_plural if one_way_inventory else "sequences"),
         ("Replacement inventory planning delay" if one_way_inventory else "Recharge downtime", 0.0 if one_way_inventory else recharge_downtime_hr, "hr"),
         ("Elapsed mission time" if one_way_inventory else "Elapsed time incl. recharge", mean_duration if one_way_inventory else mean_duration + recharge_downtime_hr, "hr"),

@@ -247,10 +247,10 @@ def _mission_sequence_visibility(mission_type: str) -> Any:
 def _energy_equivalence_planning_basis(summary: dict[str, Any]) -> tuple[float, str]:
     """Choose the report energy value for the secondary equivalence lens."""
     for label, key in (
-        ("Conservative stress estimate", "conservative_stress_energy_kwh"),
-        ("Recommended planning energy", "recommended_planning_energy_kwh"),
-        ("Expected mission energy", "expected_energy_kwh"),
-        ("Technical P95 simulated energy", "p95_energy_kwh"),
+        ("Stress case", "conservative_stress_energy_kwh"),
+        ("Planning recommendation", "recommended_planning_energy_kwh"),
+        ("Expected energy", "expected_energy_kwh"),
+        ("Mission energy fallback", "p95_energy_kwh"),
     ):
         value = safe_float(summary.get(key))
         if value is not None:
@@ -633,8 +633,8 @@ def run_from_ui(
             else "Battery inventory is insufficient without recharge."
         )
     status = (
-        f"Simulation complete. Recommended planning energy: {recommended_energy:.1f} kWh. "
-        f"Conservative stress estimate: {stress_energy:.1f} kWh. "
+        f"Simulation complete. Planning recommendation: {recommended_energy:.1f} kWh. "
+        f"Stress case: {stress_energy:.1f} kWh. "
         f"{inventory_sentence}"
     )
     if mission_type in ISR_MISSIONS:
@@ -653,7 +653,6 @@ def run_from_ui(
         summary["rng_seed_requested"] = parsed_seed
         summary["rng_seed_used"] = summary.get("rng_seed")
     else:
-        status += f" {inventory_label.capitalize()} required: {summary['battery_sets_required_recommended']}."
         recharge_category = str(summary.get("recharge_feasibility_category") or "")
         if not one_way_inventory and recharge_category == "charged_inventory":
             pass
@@ -667,10 +666,7 @@ def run_from_ui(
         elif not one_way_inventory and recharge_category == "recharge_disabled" and float(summary.get("in_mission_recharge_shortfall_kwh") or 0.0) > 0:
             status += f" Battery inventory shortfall: {summary['battery_shortfall_recommended']} set(s); recharge is not enabled."
         elif summary["battery_inventory_sufficient_no_recharge"]:
-            if one_way_inventory:
-                status += " Vehicle inventory is sufficient for the modeled one-way requirement."
-            else:
-                status += " Battery inventory is sufficient without recharge."
+            pass
         elif one_way_inventory:
             status += f" Vehicle inventory shortfall: {summary['battery_shortfall_recommended']} unit(s); add one-way inventory or reduce mission burden."
         elif summary.get("recharge_allowed"):
@@ -709,14 +705,14 @@ def run_from_ui(
     energy_summary_html = build_detail_section_html(
         build_energy_summary_rows(summary),
         "Energy Detail",
-        "Energy detail compares the expected simulated energy, modeled uncertainty allowance, recommended planning energy, and conservative stress estimate. The recommendation is derived from the Monte Carlo output distribution using the mean simulated energy plus one standard deviation. The conservative stress estimate is calculated as the average of the highest-energy 10% of simulation runs. Percentile values are retained in technical traceability for auditability, but they are not the primary decision language.",
+        "Energy detail compares expected energy, uncertainty allowance, planning recommendation, and stress case. The planning recommendation is derived from the Monte Carlo output distribution using the mean simulated energy plus one standard deviation. The stress case is calculated as the average of the highest-energy 10% of simulation runs. Percentile values are retained in Technical Traceability for auditability, but they are not the primary decision language.",
         build_energy_detail_helper(summary),
     )
     battery_sustainment_html = (
         build_detail_section_html(
             build_battery_sustainment_rows(summary),
             "Battery and Sustainment Detail",
-            "Battery sufficiency compares recommended planning energy and conservative stress energy against usable inventory energy after reserve, temperature, and battery-condition assumptions.",
+            "Battery sufficiency compares the planning recommendation and stress case against usable inventory energy after reserve, temperature, and battery-condition assumptions.",
             build_battery_detail_helper(summary),
         )
         + build_detail_section_html(
@@ -750,7 +746,7 @@ def run_from_ui(
             equivalence_basis,
             float(summary.get("sustainment_fuel_gallons_equivalent") or 0.0),
         ),
-        "Energy Storage Equivalence Lens",
+        None,
     )
     fig_time = build_energy_time_chart(
         result.energy_samples_kwh,
@@ -945,9 +941,10 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                         energy_time_plot = gr.Plot(label=None, show_label=False, elem_classes=["report-plot"])
                 gr.Markdown("### Energy Detail")
                 gr.Markdown(
-                    "Energy detail uses expected mission energy, modeled uncertainty allowance, recommended planning energy, "
-                    "and conservative stress estimate as the primary decision language. Technical percentile traceability "
-                    "is retained for audit review."
+                    "Energy detail compares expected energy, uncertainty allowance, planning recommendation, and stress case. "
+                    "The planning recommendation is derived from the Monte Carlo output distribution using the mean simulated energy plus one standard deviation. "
+                    "The stress case is calculated as the average of the highest-energy 10% of simulation runs. "
+                    "Percentile values are retained in Technical Traceability for auditability, but they are not the primary decision language."
                 )
                 energy_summary_table = gr.HTML("")
                 gr.Markdown("### Battery and Sustainment Detail")

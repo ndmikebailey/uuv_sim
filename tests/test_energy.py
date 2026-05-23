@@ -257,7 +257,7 @@ class EnergyReproducibilityTests(unittest.TestCase):
         self.assertGreater(float(with_sensor.summary["mission_sensor_energy_mean_kwh"]), 0.0)
         self.assertIn("Hotel power component", [row[0] for row in with_sensor.result_rows])
         self.assertIn("Propulsion power component", [row[0] for row in with_sensor.result_rows])
-        self.assertIn("Mission sensor-mode power, P50", [row[0] for row in with_sensor.result_rows])
+        self.assertIn("Sensor load", [row[0] for row in with_sensor.result_rows])
 
     def test_search_transit_uses_low_sensor_range_not_mcm_range(self) -> None:
         """Additional Search/MCM transit should not carry the full active survey sensor range."""

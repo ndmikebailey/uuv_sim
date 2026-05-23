@@ -209,7 +209,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
                 self.assertNotIn("Battery sets P80", str(result[11]))
                 self.assertNotIn("Battery sets P95", str(result[11]))
                 self.assertNotIn("Available battery inventory", str(result[11]))
-                self.assertIn("Conservative stress estimate", str(result[12]))
+                self.assertIn("Stress case", str(result[12]))
                 self.assertIn("Barrel-of-oil equivalent", str(result[12]))
                 self.assertEqual(result[8]["visible"], True)
                 self.assertEqual(result[9]["visible"], True)
@@ -261,14 +261,14 @@ class AppCallbackSmokeTests(unittest.TestCase):
         executive_summary = self._executive_summary_text(result[11])
         self.assertIn("Executive Results Summary", executive_summary)
         self.assertLess(executive_summary.index("The modeled search/MCM mission"), executive_summary.index("Monte Carlo"))
-        self.assertIn("Recommended planning energy is", executive_summary)
-        self.assertIn("conservative stress estimate is", executive_summary)
-        self.assertIn("search-track current burden", executive_summary)
+        self.assertIn("Planning recommendation is", executive_summary)
+        self.assertIn("stress case is", executive_summary)
+        self.assertIn("track-relative current burden", executive_summary)
         self.assertNotIn("None", executive_summary)
-        self.assertIn("Battery sets recommended", str(result[11]))
-        self.assertIn("Battery sets stress", str(result[11]))
+        self.assertIn("Battery sets needed", str(result[11]))
+        self.assertIn("Stress-case battery sets", str(result[11]))
         self.assertNotIn("METOC risk", str(result[11]))
-        self.assertIn("Conservative stress estimate", str(result[12]))
+        self.assertIn("Stress case", str(result[12]))
         self.assertEqual(result[8]["visible"], True)
         self.assertEqual(result[9]["visible"], True)
         self.assertIn("Mission Map Overlay", str(result[9]["value"]))
@@ -459,7 +459,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertEqual(fuel_rows["Fuel-equivalent estimate based on generator input energy"], "0.38 gal JP-8/diesel")
 
     def test_battery_sustainment_rows_match_negative_energy_margins(self) -> None:
-        """Battery detail should not hide P80/P95 shortfalls behind ISR set wording."""
+        """Battery detail should not hide stress-case shortfalls behind ISR set wording."""
         summary = {
             "mission_type": "ISR",
             "usable_battery_per_set_kwh": 13.2,
@@ -474,13 +474,13 @@ class AppCallbackSmokeTests(unittest.TestCase):
             "sustainment_generator_efficiency": 0.84,
         }
         rows = {label: value for label, value, _ in build_battery_sustainment_rows(summary)}
-        self.assertAlmostEqual(rows["Planning-level shortfall"], 0.4)
-        self.assertAlmostEqual(rows["Conservative shortfall"], 0.6)
-        self.assertEqual(rows["Planning-level battery inventory sufficient"], "No")
-        self.assertEqual(rows["Conservative battery inventory sufficient"], "No")
-        self.assertEqual(rows["Battery sets required for recommended planning energy"], 2)
-        self.assertEqual(rows["Battery sets required for conservative stress estimate"], 2)
-        self.assertIn("Nameplate-to-usable allowance per set", rows)
+        self.assertAlmostEqual(rows["Recommended planning shortfall"], 0.4)
+        self.assertAlmostEqual(rows["Stress-case shortfall"], 0.6)
+        self.assertEqual(rows["Planning inventory sufficient"], "No")
+        self.assertEqual(rows["Stress-case inventory sufficient"], "No")
+        self.assertEqual(rows["Battery sets needed"], 2)
+        self.assertEqual(rows["Stress-case battery sets"], 2)
+        self.assertIn("Usable-energy allowance", rows)
         self.assertNotIn("Reserve energy per set", rows)
 
     def test_inventory_coverage_and_generator_labels_use_true_basis(self) -> None:
@@ -503,8 +503,8 @@ class AppCallbackSmokeTests(unittest.TestCase):
             "sustainment_generator_kwh_per_gallon": 10.0,
         }
         helper = build_battery_detail_helper(summary)
-        self.assertIn("Recommended uses 103.0% of inventory", helper)
-        self.assertIn("stress estimate uses 104.5%", helper)
+        self.assertIn("Planning recommendation uses 103.0% of inventory", helper)
+        self.assertIn("stress case uses 104.5%", helper)
         self.assertIn("Visual gauge capped at 100%", helper)
         sustainment_rows = {label: value for label, value, _ in build_sustainment_projection_rows(summary)}
         self.assertEqual(sustainment_rows["Generator efficiency"], "84%")
@@ -676,9 +676,9 @@ class AppCallbackSmokeTests(unittest.TestCase):
             {},
         )
         status = str(result[0])
-        self.assertIn("Battery sets required", status)
-        self.assertIn("Recommended planning energy", status)
-        self.assertIn("Conservative stress estimate", status)
+        self.assertIn("Battery inventory is insufficient", status)
+        self.assertIn("Planning recommendation", status)
+        self.assertIn("Stress case", status)
         self.assertIn("recharge cycle is a bottleneck under current assumptions", status)
 
     def test_isr_run_status_uses_endurance_language_not_generic_bottleneck(self) -> None:
@@ -738,9 +738,9 @@ class AppCallbackSmokeTests(unittest.TestCase):
         status = str(result[0])
         report_text = " ".join(str(result[index]) for index in (2, 3, 11))
         normal_output = f"{status} {report_text}"
-        self.assertIn("Vehicle units required", status)
-        self.assertIn("Recommended planning energy", status)
-        self.assertIn("Conservative stress estimate", status)
+        self.assertIn("Vehicle inventory is insufficient", status)
+        self.assertIn("Planning recommendation", status)
+        self.assertIn("Stress case", status)
         self.assertIn("Vehicle inventory", normal_output)
         self.assertIn("one-way inventory", normal_output)
         self.assertNotIn("recharge/swap sequence required", normal_output)
@@ -782,41 +782,41 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertIn("Technical Traceability / Model Detail", str(payload_run[11]))
         self.assertLess(str(payload_run[11]).index("BLUF"), str(payload_run[11]).index("Executive Results Summary"))
         self.assertLess(str(payload_run[11]).index("Executive Results Summary"), str(payload_run[11]).index("Technical Traceability / Model Detail"))
-        self.assertIn("Energy Detail", str(payload_run[2]))
-        self.assertIn("Speed-adjusted vehicle power", str(payload_run[2]))
+        self.assertNotIn("Energy Detail", str(payload_run[2]))
+        self.assertIn("Speed-adjusted power", str(payload_run[2]))
         self.assertIn("Hotel power component", str(payload_run[2]))
         self.assertIn("section-insight-card", str(payload_run[2]))
         self.assertIn("report-table", str(payload_run[2]))
-        self.assertIn("Battery and Sustainment Detail", str(payload_run[3]))
-        self.assertIn("Sustainment Projection Lens", str(payload_run[3]))
+        self.assertNotIn("Battery and Sustainment Detail", str(payload_run[3]))
+        self.assertNotIn("Sustainment Projection Lens", str(payload_run[3]))
         self.assertIn("mini-bar", str(payload_run[3]))
         self.assertIn("report-table", str(payload_run[3]))
         self.assertIn("Single mission default", str(payload_run[3]))
-        self.assertIn("Mission Geometry Detail", str(payload_run[4]))
+        self.assertNotIn("Mission Geometry Detail", str(payload_run[4]))
         self.assertIn("section-insight-card", str(payload_run[4]))
-        self.assertIn("Environmental Detail", str(payload_run[5]))
+        self.assertNotIn("Environmental Detail", str(payload_run[5]))
         self.assertIn("fixed-scale-gauge", str(payload_run[5]))
         self.assertIn("Total environmental burden:", str(payload_run[5]))
         self.assertNotIn("width:100.0%", str(payload_run[5]))
         self.assertIn("report-table", str(payload_run[5]))
         self.assertIn("METOC Assessment", str(payload_run[13]))
-        self.assertIn("Energy Storage Equivalence Lens", str(payload_run[12]))
+        self.assertNotIn("Energy Storage Equivalence Lens", str(payload_run[12]))
         self.assertNotIn("Payload mission planning", str(payload_run[11]))
         executive_summary = self._executive_summary_text(payload_run[11])
         self.assertIn("Executive Results Summary", executive_summary)
         self.assertLess(executive_summary.index("The modeled route/transit mission"), executive_summary.index("Monte Carlo"))
         self.assertIn("1000 Monte Carlo trials", executive_summary)
         self.assertIn("using deterministic seed 12345", executive_summary)
-        self.assertIn("Recommended planning energy is", executive_summary)
-        self.assertIn("conservative stress estimate is", executive_summary)
+        self.assertIn("Planning recommendation is", executive_summary)
+        self.assertIn("stress case is", executive_summary)
         self.assertIn("return transit distance and route current", executive_summary)
         self.assertIn("Return-to-start planning increases modeled distance", executive_summary)
-        self.assertIn("Technical percentile traceability", str(payload_run[11]))
+        self.assertIn("Monte Carlo Technical Traceability", str(payload_run[11]))
         self.assertNotIn("None", executive_summary)
-        self.assertIn("Recommended planning energy", str(payload_run[11]))
-        self.assertIn("Conservative stress estimate", str(payload_run[11]))
-        self.assertIn("Battery sets recommended", str(payload_run[11]))
-        self.assertIn("Battery sets stress", str(payload_run[11]))
+        self.assertIn("Planning recommendation", str(payload_run[11]))
+        self.assertIn("Stress case", str(payload_run[11]))
+        self.assertIn("Battery sets needed", str(payload_run[11]))
+        self.assertIn("Stress-case battery sets", str(payload_run[11]))
         self.assertNotIn("METOC risk", str(payload_run[11]))
         self.assertNotIn("dry-weight", str(payload_run[4]).lower())
         self.assertNotIn("dry weight", str(payload_run[4]).lower())
@@ -1021,8 +1021,8 @@ class AppCallbackSmokeTests(unittest.TestCase):
             main.MONTE_CARLO_MODE,
             10,
         )
-        self.assertIn("Recommended planning energy:", str(generated[0]))
-        self.assertIn("Conservative stress estimate:", str(generated[0]))
+        self.assertIn("Planning recommendation:", str(generated[0]))
+        self.assertIn("Stress case:", str(generated[0]))
         self.assertNotIn("P80", str(generated[0]))
         self.assertNotIn("P95", str(generated[0]))
         self.assertIsNone(generated[10]["rng_seed_requested"])
@@ -1093,6 +1093,108 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertEqual(deterministic[10]["simulation_mode"], main.DETERMINISTIC_MODE)
         self.assertEqual(deterministic[10]["monte_carlo_runs"], 1)
         self.assertNotIn("Invalid seed", str(deterministic[0]))
+
+    def test_v4_report_hierarchy_keeps_percentiles_in_traceability(self) -> None:
+        """Main report should stay decision-focused while traceability keeps percentile details."""
+        result = main.run_from_ui(
+            "REMUS 300 - 4.5 kWh",
+            "Route / Transit",
+            10,
+            3,
+            3,
+            10,
+            0,
+            0,
+            200,
+            True,
+            3.5,
+            1,
+            True,
+            1,
+            "12345",
+            0.5,
+            90,
+            25,
+            {},
+            "Medium",
+            1,
+            "1 week",
+            0.84,
+            0,
+            False,
+            main.MONTE_CARLO_MODE,
+            10,
+        )
+        status = str(result[0])
+        energy_detail = str(result[2])
+        battery_detail = str(result[3])
+        geometry_detail = str(result[4])
+        environmental_detail = str(result[5])
+        decision_and_traceability = str(result[11])
+        energy_equivalence = str(result[12])
+        decision_card = decision_and_traceability.split("Technical Traceability / Model Detail")[0]
+
+        self.assertIn("Planning recommendation:", status)
+        self.assertIn("Stress case:", status)
+        self.assertNotIn("P80", status)
+        self.assertNotIn("P95", status)
+
+        for forbidden in (
+            "Technical P50 simulated energy",
+            "Technical P80 simulated energy",
+            "Technical P95 simulated energy",
+            "P50 simulation value",
+            "P80 simulation value",
+            "P95 simulation value",
+            "Recommendation basis",
+        ):
+            self.assertNotIn(forbidden, energy_detail)
+        self.assertIn("Expected energy", energy_detail)
+        self.assertIn("Uncertainty allowance", energy_detail)
+        self.assertIn("Planning recommendation", energy_detail)
+        self.assertIn("Stress case", energy_detail)
+        self.assertIn("Sensor load", energy_detail)
+        self.assertIn("Sensor load range", energy_detail)
+        self.assertNotIn("P50", energy_detail)
+        self.assertNotIn("P80", energy_detail)
+        self.assertNotIn("P95", energy_detail)
+        self.assertNotIn("Recommended planning energy", energy_detail)
+        self.assertNotIn("Conservative stress estimate", energy_detail)
+
+        self.assertIn("Monte Carlo Technical Traceability", decision_and_traceability)
+        self.assertIn("P50 simulation value", decision_and_traceability)
+        self.assertIn("P80 simulation value", decision_and_traceability)
+        self.assertIn("P95 simulation value", decision_and_traceability)
+        self.assertIn("Recommendation basis", decision_and_traceability)
+        self.assertIn("P50/P80/P95 are percentiles of the Monte Carlo output distribution", decision_and_traceability)
+        self.assertIn("Expected energy definition", decision_and_traceability)
+        self.assertIn("Upper-tail fraction", decision_and_traceability)
+
+        self.assertNotIn("P50", decision_card)
+        self.assertNotIn("P80", decision_card)
+        self.assertNotIn("P95", decision_card)
+        self.assertNotIn("Planning-level", decision_card)
+        self.assertNotIn("Recommended planning energy", decision_card)
+        self.assertNotIn("Conservative stress estimate", decision_card)
+
+        self.assertEqual(energy_detail.count("Energy Detail"), 0)
+        self.assertEqual(battery_detail.count("Battery and Sustainment Detail"), 0)
+        self.assertEqual(geometry_detail.count("Mission Geometry Detail"), 0)
+        self.assertEqual(environmental_detail.count("Environmental Detail"), 0)
+        self.assertEqual(energy_equivalence.count("Energy Storage Equivalence Lens"), 0)
+        self.assertEqual(decision_and_traceability.count("Technical Traceability / Model Detail"), 1)
+
+        distribution_labels = [text.get_text() for text in result[7].axes[0].get_legend().get_texts()]
+        self.assertTrue(any(label.startswith("Expected") for label in distribution_labels))
+        self.assertTrue(any(label.startswith("Planning recommendation") for label in distribution_labels))
+        self.assertTrue(any(label.startswith("Stress case") for label in distribution_labels))
+        self.assertTrue(any(label.startswith("Battery available") for label in distribution_labels))
+        self.assertFalse(any("P50" in label or "P80" in label or "P95" in label for label in distribution_labels))
+
+        time_labels = [text.get_text() for text in result[6].axes[0].get_legend().get_texts()]
+        self.assertIn("Expected", time_labels)
+        self.assertIn("Battery available", time_labels)
+        self.assertFalse(any("P50" in label or "P80" in label or "P95" in label for label in time_labels))
 
     def test_sustainment_projection_controls_are_optional(self) -> None:
         """Sustainment projection inputs should stay hidden until requested."""
