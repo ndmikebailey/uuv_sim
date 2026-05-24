@@ -134,15 +134,18 @@ def build_detail_section_html(
     title: str,
     note: str = "",
     helper_html: str = "",
+    render_title: bool = False,
 ) -> str:
     """Render a detail section with a short interpretation note, helper visual, and table."""
     table_html = build_report_table_html(rows, None)
     if not table_html:
         return ""
+    heading_html = f"<h3>{escape(title)}</h3>" if render_title and title else ""
     note_html = f"<p class='section-note'>{escape(note)}</p>" if note else ""
     table_inner = table_html.replace("<div class='uuv-card full-width-card'>", "<div class='detail-table-wrap'>", 1)
     return f"""
     <div class='uuv-card full-width-card detail-section-card'>
+      {heading_html}
       {note_html}
       {helper_html}
       {table_inner}

@@ -16,7 +16,6 @@ from app.ui.reporting import (
     build_energy_equivalence_rows,
     build_energy_detail_helper,
     build_energy_planner_summary_html,
-    build_report_table_html,
     build_energy_time_chart,
     build_energy_summary_rows,
     build_engineering_snapshot_caption,
@@ -708,20 +707,20 @@ def run_from_ui(
         "Energy detail compares expected energy, uncertainty allowance, planning recommendation, and stress case. The planning recommendation is derived from the Monte Carlo output distribution using the mean simulated energy plus one standard deviation. The stress case is calculated as the average of the highest-energy 10% of simulation runs. Percentile values are retained in Technical Traceability for auditability, but they are not the primary decision language.",
         build_energy_detail_helper(summary),
     )
-    battery_sustainment_html = (
-        build_detail_section_html(
-            build_battery_sustainment_rows(summary),
-            "Battery and Sustainment Detail",
-            "Battery sufficiency compares the planning recommendation and stress case against usable inventory energy after reserve, temperature, and battery-condition assumptions.",
-            build_battery_detail_helper(summary),
-        )
-        + build_detail_section_html(
+    battery_sustainment_html = build_detail_section_html(
+        build_battery_sustainment_rows(summary),
+        "Battery and Sustainment Detail",
+        "Battery sufficiency compares the planning recommendation and stress case against usable inventory energy after reserve, temperature, and battery-condition assumptions.",
+        build_battery_detail_helper(summary),
+    )
+    if bool(sustainment_projection_enabled):
+        battery_sustainment_html += build_detail_section_html(
             build_sustainment_projection_rows(summary),
             "Sustainment Projection Lens",
             "The sustainment lens is an energy-flow projection for the selected horizon and operations tempo. Fuel-equivalent estimate is based on generator input energy using a conservative 10.0 kWh/gal JP-8/diesel tactical-generator planning factor. This is a sustainment-planning estimate, not a generator certification curve.",
             build_sustainment_projection_helper(summary),
+            render_title=True,
         )
-    )
     geometry_note = (
         "ISR persistence is evaluated as total endurance-window mission energy, with loop distance retained for patrol coverage accounting."
         if mission_type in ISR_MISSIONS
@@ -740,13 +739,14 @@ def run_from_ui(
         build_environment_detail_helper(summary),
     )
     equivalence_energy_kwh, equivalence_basis = _energy_equivalence_planning_basis(summary)
-    energy_equivalence_html = build_report_table_html(
+    energy_equivalence_html = build_detail_section_html(
         build_energy_equivalence_rows(
             equivalence_energy_kwh,
             equivalence_basis,
             float(summary.get("sustainment_fuel_gallons_equivalent") or 0.0),
         ),
-        None,
+        "Energy Storage Equivalence Lens",
+        "Energy-equivalence values are provided as a secondary sustainment-planning lens. Oil-equivalent values are approximate conversions and do not imply direct fuel interchangeability.",
     )
     fig_time = build_energy_time_chart(
         result.energy_samples_kwh,
@@ -940,12 +940,6 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                     with gr.Column(scale=1, min_width=360, elem_classes=["report-visual-card"]):
                         energy_time_plot = gr.Plot(label=None, show_label=False, elem_classes=["report-plot"])
                 gr.Markdown("### Energy Detail")
-                gr.Markdown(
-                    "Energy detail compares expected energy, uncertainty allowance, planning recommendation, and stress case. "
-                    "The planning recommendation is derived from the Monte Carlo output distribution using the mean simulated energy plus one standard deviation. "
-                    "The stress case is calculated as the average of the highest-energy 10% of simulation runs. "
-                    "Percentile values are retained in Technical Traceability for auditability, but they are not the primary decision language."
-                )
                 energy_summary_table = gr.HTML("")
                 gr.Markdown("### Battery and Sustainment Detail")
                 battery_sustainment_table = gr.HTML("")
@@ -955,10 +949,6 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                 environmental_inputs_table = gr.HTML("")
                 gr.Markdown("### Energy Storage Equivalence Lens")
                 energy_equivalence_table = gr.HTML("")
-                gr.Markdown(
-                    "Energy-equivalence values are provided as a secondary sustainment-planning lens. "
-                    "Oil-equivalent values are approximate conversions and do not imply direct fuel interchangeability."
-                )
                 search_overlay_plot = gr.Plot(label=None, show_label=False, elem_classes=["report-plot"], visible=False)
 
         refresh_map_btn.click(refresh_map, inputs=[region_select], outputs=[map_html])

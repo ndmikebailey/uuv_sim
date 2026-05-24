@@ -791,7 +791,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertNotIn("Sustainment Projection Lens", str(payload_run[3]))
         self.assertIn("mini-bar", str(payload_run[3]))
         self.assertIn("report-table", str(payload_run[3]))
-        self.assertIn("Single mission default", str(payload_run[3]))
+        self.assertNotIn("Single mission default", str(payload_run[3]))
         self.assertNotIn("Mission Geometry Detail", str(payload_run[4]))
         self.assertIn("section-insight-card", str(payload_run[4]))
         self.assertNotIn("Environmental Detail", str(payload_run[5]))
@@ -801,6 +801,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertIn("report-table", str(payload_run[5]))
         self.assertIn("METOC Assessment", str(payload_run[13]))
         self.assertNotIn("Energy Storage Equivalence Lens", str(payload_run[12]))
+        self.assertIn("Energy-equivalence values are provided as a secondary sustainment-planning lens", str(payload_run[12]))
         self.assertNotIn("Payload mission planning", str(payload_run[11]))
         executive_summary = self._executive_summary_text(payload_run[11])
         self.assertIn("Executive Results Summary", executive_summary)
@@ -818,6 +819,36 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertIn("Battery sets needed", str(payload_run[11]))
         self.assertIn("Stress-case battery sets", str(payload_run[11]))
         self.assertNotIn("METOC risk", str(payload_run[11]))
+
+        sustainment_run = main.run_from_ui(
+            "REMUS 300 - 4.5 kWh",
+            "Route / Transit",
+            10,
+            3,
+            3,
+            10,
+            0,
+            0,
+            200,
+            True,
+            3.5,
+            1,
+            True,
+            1,
+            "12345",
+            0.6,
+            85,
+            26,
+            payload[0],
+            "Medium",
+            2,
+            "1 week",
+            0.84,
+            0,
+            True,
+        )
+        self.assertIn("Sustainment Projection Lens", str(sustainment_run[3]))
+        self.assertIn("The sustainment lens is an energy-flow projection", str(sustainment_run[3]))
         self.assertNotIn("dry-weight", str(payload_run[4]).lower())
         self.assertNotIn("dry weight", str(payload_run[4]).lower())
         self.assertIn("Kilocalories", str(payload_run[12]))
