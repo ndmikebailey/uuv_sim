@@ -710,7 +710,12 @@ def run_from_ui(
     battery_sustainment_html = build_detail_section_html(
         build_battery_sustainment_rows(summary),
         "Battery and Sustainment Detail",
-        "Battery sufficiency compares the planning recommendation and stress case against usable inventory energy after reserve, temperature, and battery-condition assumptions.",
+        (
+            "Battery sufficiency compares the planning recommendation and stress case against usable inventory energy after reserve, temperature, and battery-condition assumptions. "
+            "Single mission default is used because the optional sustainment projection lens is not enabled."
+            if not bool(sustainment_projection_enabled) and not bool(context)
+            else "Battery sufficiency compares the planning recommendation and stress case against usable inventory energy after reserve, temperature, and battery-condition assumptions."
+        ),
         build_battery_detail_helper(summary),
     )
     if bool(sustainment_projection_enabled):

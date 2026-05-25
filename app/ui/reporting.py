@@ -951,7 +951,7 @@ def build_technical_traceability_html(summary: dict[str, object], environment: E
     monte_carlo_table = build_report_table_html(monte_carlo_rows, None)
     monte_carlo_detail = (
         "<details class='traceability-detail monte-carlo-traceability'>"
-        "<summary>Monte Carlo Technical Traceability</summary>"
+        "<summary>Monte Carlo Technical Traceability <span class='sr-only'>Technical percentile traceability</span></summary>"
         f"{monte_carlo_table}"
         "</details>"
         if monte_carlo_table

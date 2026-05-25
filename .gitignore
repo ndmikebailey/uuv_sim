@@ -26,3 +26,4 @@ Thumbs.db
 
 # Local-only analysis and Matplotlib artifacts
 local_matplotlib/
+local_validation/
