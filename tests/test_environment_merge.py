@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from models.environment_model import EnvironmentData
+from models.environment_model import EnvironmentData, provider_status_text
 
 
 class EnvironmentMergeTests(unittest.TestCase):
@@ -55,6 +55,18 @@ class EnvironmentMergeTests(unittest.TestCase):
         environment = EnvironmentData(sea_surface_salinity_psu=35.1)
         rows = environment.table_rows(13.4, 144.8)
         self.assertIn(("Sea surface salinity", 35.1, "PSU"), rows)
+
+    def test_provider_status_compacts_rate_limit_errors(self) -> None:
+        """Provider status should not leak long URLs into visible tables."""
+        error = (
+            "429 Client Error: Too Many Requests for url: "
+            "https://api.open-meteo.com/v1/forecast?latitude=13.5&longitude=144.6"
+        )
+        self.assertEqual(provider_status_text(None), "OK")
+        self.assertEqual(provider_status_text(error), "Unavailable: 429 Too Many Requests")
+        rows = EnvironmentData(weather_error=error).table_rows(13.4, 144.8)
+        self.assertIn(("Weather status", "Unavailable: 429 Too Many Requests", ""), rows)
+        self.assertNotIn("api.open-meteo.com", str(rows))
 
 
 if __name__ == "__main__":

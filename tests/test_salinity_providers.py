@@ -152,6 +152,16 @@ class SalinityProviderTests(unittest.TestCase):
         self.assertNotIn("Salinity provider note", labels)
         self.assertNotIn("Salinity validation status", labels)
 
+    def test_report_environment_rows_include_compact_provider_status(self) -> None:
+        error = (
+            "429 Client Error: Too Many Requests for url: "
+            "https://api.open-meteo.com/v1/forecast?latitude=13.5&longitude=144.6"
+        )
+        rows = build_environmental_input_rows({}, EnvironmentData(weather_error=error))
+        self.assertIn(("Marine status", "OK", ""), rows)
+        self.assertIn(("Weather status", "Unavailable: 429 Too Many Requests", ""), rows)
+        self.assertNotIn("api.open-meteo.com", str(rows))
+
     def test_sustainment_projection_reports_fuel_lens_without_removing_energy(self) -> None:
         rows = build_sustainment_projection_rows(
             {

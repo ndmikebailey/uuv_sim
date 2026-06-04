@@ -124,6 +124,14 @@ class MissionLookupTests(unittest.TestCase):
         area = parse_geometry_json(json.dumps(LINE_GEOMETRY))
         self.assertEqual(choose_environment_lookup_point("Payload Delivery", area), (13.45, 144.805))
 
+    def test_route_transit_rejects_area_with_route_wording(self) -> None:
+        """Route validation should not leak the old payload delivery language."""
+        result = build_mission_context("Route / Transit", json.dumps(POLYGON_GEOMETRY), FakeMetocService())  # type: ignore[arg-type]
+        self.assertFalse(result.ok)
+        self.assertIn("Route / Transit requires a line route", result.status)
+        self.assertNotIn("Payload", result.status)
+        self.assertNotIn("drop point", result.status)
+
     def test_area_search_uses_centroid_for_lookup(self) -> None:
         """Area search remains centroid-driven."""
         area = parse_geometry_json(json.dumps(POLYGON_GEOMETRY))

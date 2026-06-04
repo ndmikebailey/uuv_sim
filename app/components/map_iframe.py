@@ -20,16 +20,55 @@ def build_leaflet_iframe(region_name: str = "Guam") -> str:
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
   <style>
-    html, body {{ margin: 0; padding: 0; background: #0b1220; color: white; font-family: Arial, sans-serif; }}
+    :root {{
+      color-scheme: light dark;
+      --map-shell-bg: #ffffff;
+      --map-note-bg: #e5edf7;
+      --map-card-bg: #ffffff;
+      --map-border: #cbd5e1;
+      --map-text: #0f172a;
+      --map-heading: #020617;
+      --map-muted: #475569;
+    }}
+    html.light, body.light {{
+      --map-shell-bg: #ffffff;
+      --map-note-bg: #e5edf7;
+      --map-card-bg: #ffffff;
+      --map-border: #cbd5e1;
+      --map-text: #0f172a;
+      --map-heading: #020617;
+      --map-muted: #475569;
+    }}
+    @media (prefers-color-scheme: dark) {{
+      :root {{
+        --map-shell-bg: #0b1220;
+        --map-note-bg: #1f2937;
+        --map-card-bg: #0f172a;
+        --map-border: #374151;
+        --map-text: #e5e7eb;
+        --map-heading: #ffffff;
+        --map-muted: #cbd5e1;
+      }}
+    }}
+    html.dark, body.dark {{
+      --map-shell-bg: #0b1220;
+      --map-note-bg: #1f2937;
+      --map-card-bg: #0f172a;
+      --map-border: #374151;
+      --map-text: #e5e7eb;
+      --map-heading: #ffffff;
+      --map-muted: #cbd5e1;
+    }}
+    html, body {{ margin: 0; padding: 0; background: var(--map-shell-bg); color: var(--map-text); font-family: Arial, sans-serif; }}
     #map {{ width: 100%; height: 560px; }}
-    #output {{ padding: 12px; background: #111827; min-height: 96px; font-size: 14px; }}
+    #output {{ padding: 12px; background: var(--map-shell-bg); min-height: 96px; font-size: 14px; }}
     #raw_output {{ display: none; }}
-    .note {{ padding: 8px 10px; background: #1f2937; font-size: 12px; }}
+    .note {{ padding: 8px 10px; background: var(--map-note-bg); color: var(--map-text); font-size: 12px; }}
     .snap-grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }}
-    .snap-card {{ border: 1px solid #374151; border-radius: 10px; padding: 10px; background: #0f172a; }}
-    .snap-label {{ color: #9ca3af; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }}
-    .snap-value {{ color: #ffffff; font-size: 20px; font-weight: 800; margin-top: 3px; }}
-    .snap-sub {{ color: #cbd5e1; font-size: 12px; margin-top: 6px; }}
+    .snap-card {{ border: 1px solid var(--map-border); border-radius: 10px; padding: 10px; background: var(--map-card-bg); color: var(--map-text); }}
+    .snap-label {{ color: var(--map-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }}
+    .snap-value {{ color: var(--map-heading); font-size: 20px; font-weight: 800; margin-top: 3px; }}
+    .snap-sub {{ color: var(--map-muted); font-size: 12px; margin-top: 6px; }}
   </style>
 </head>
 <body>
@@ -46,6 +85,28 @@ def build_leaflet_iframe(region_name: str = "Guam") -> str:
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
   <script>
+    function syncColorTheme() {{
+      try {{
+        const parentDoc = window.parent && window.parent.document;
+        const parentRoot = parentDoc && parentDoc.documentElement;
+        const parentBody = parentDoc && parentDoc.body;
+        const parentContainer = parentDoc && parentDoc.querySelector('.gradio-container');
+        const themeHosts = [parentRoot, parentBody, parentContainer].filter(Boolean);
+        const isDark =
+          themeHosts.some(el => el.classList.contains('dark') || el.dataset.theme === 'dark');
+        document.documentElement.classList.toggle('dark', Boolean(isDark));
+        document.body.classList.toggle('dark', Boolean(isDark));
+        document.documentElement.classList.toggle('light', !Boolean(isDark));
+        document.body.classList.toggle('light', !Boolean(isDark));
+      }} catch (error) {{
+        const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.classList.toggle('dark', isDark);
+        document.body.classList.toggle('dark', isDark);
+        document.documentElement.classList.toggle('light', !isDark);
+        document.body.classList.toggle('light', !isDark);
+      }}
+    }}
+    syncColorTheme();
     const map = L.map('map').setView([{lat}, {lon}], {zoom});
     L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
       attribution: '&copy; OpenStreetMap contributors'
@@ -231,7 +292,7 @@ def build_leaflet_iframe(region_name: str = "Guam") -> str:
   srcdoc="{srcdoc}"
   width="100%"
   height="700"
-  style="border:none; border-radius:12px; overflow:hidden; background:#0b1220;"
+  style="border:none; border-radius:12px; overflow:hidden; background:#ffffff;"
 ></iframe>
 """
 

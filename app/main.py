@@ -51,27 +51,82 @@ METOC_SERVICE = MetocFusionService(
 )
 
 CUSTOM_CSS = """
+:root {
+  color-scheme: light dark;
+  --uuv-panel-bg: #ffffff;
+  --uuv-panel-soft-bg: #f8fafc;
+  --uuv-table-head-bg: #e5edf7;
+  --uuv-border: #cbd5e1;
+  --uuv-border-strong: #94a3b8;
+  --uuv-text: #0f172a;
+  --uuv-heading: #020617;
+  --uuv-muted: #334155;
+  --uuv-subtle: #64748b;
+  --uuv-marker: #0f172a;
+  --uuv-warning-bg: #fef3c7;
+  --uuv-warning-text: #713f12;
+  --uuv-link: #1d4ed8;
+}
+.light, [data-theme="light"], .gradio-container.light {
+  --uuv-panel-bg: #ffffff;
+  --uuv-panel-soft-bg: #f8fafc;
+  --uuv-table-head-bg: #e5edf7;
+  --uuv-border: #cbd5e1;
+  --uuv-border-strong: #94a3b8;
+  --uuv-text: #0f172a;
+  --uuv-heading: #020617;
+  --uuv-muted: #334155;
+  --uuv-subtle: #64748b;
+  --uuv-marker: #0f172a;
+  --uuv-warning-bg: #fef3c7;
+  --uuv-warning-text: #713f12;
+  --uuv-link: #1d4ed8;
+}
+.dark, [data-theme="dark"], .gradio-container.dark {
+  --uuv-panel-bg: #111827;
+  --uuv-panel-soft-bg: rgba(15, 23, 42, 0.72);
+  --uuv-table-head-bg: #1f2937;
+  --uuv-border: #374151;
+  --uuv-border-strong: #475569;
+  --uuv-text: #e5e7eb;
+  --uuv-heading: #f9fafb;
+  --uuv-muted: #cbd5e1;
+  --uuv-subtle: #9ca3af;
+  --uuv-marker: #f9fafb;
+  --uuv-warning-bg: rgba(234, 179, 8, 0.18);
+  --uuv-warning-text: #fef3c7;
+  --uuv-link: #60a5fa;
+}
 .uuv-card {
-  border: 1px solid #374151;
+  border: 1px solid var(--uuv-border);
   border-radius: 12px;
   padding: 14px 16px;
-  background: #111827;
+  background: var(--uuv-panel-bg);
+  color: var(--uuv-text);
   margin: 10px 0;
 }
+.uuv-card h1, .uuv-card h2, .uuv-card h3,
+.detail-section-card h1, .detail-section-card h2, .detail-section-card h3,
+.mission-decision-brief h1, .mission-decision-brief h2, .mission-decision-brief h3 {
+  color: var(--uuv-heading);
+}
+.uuv-card a { color: var(--uuv-link); }
 .full-width-card { width: 100%; }
-.uuv-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.uuv-table { width: 100%; border-collapse: collapse; font-size: 14px; color: var(--uuv-text); }
 .uuv-table th, .uuv-table td {
-  border-bottom: 1px solid #374151;
+  border-bottom: 1px solid var(--uuv-border);
   padding: 8px 10px;
   text-align: left;
   vertical-align: top;
+  color: var(--uuv-text);
 }
-.uuv-table th { background: #1f2937; }
+.uuv-table th { background: var(--uuv-table-head-bg); color: var(--uuv-heading); }
+.uuv-table tbody tr { background: var(--uuv-panel-bg); }
 .uuv-table .value { font-weight: 700; }
-.uuv-attribution, .small-muted { color: #9ca3af; font-size: 12px; margin-top: 8px; }
+.uuv-attribution, .small-muted { color: var(--uuv-subtle); font-size: 12px; margin-top: 8px; }
 .planner-summary {
   border-color: #2563eb;
-  background: #0f172a;
+  background: var(--uuv-panel-bg);
 }
 .planner-summary h3 { margin-top: 0; }
 .planner-summary p { margin: 8px 0; line-height: 1.45; }
@@ -79,45 +134,76 @@ CUSTOM_CSS = """
 .decision-topline { display: grid; grid-template-columns: minmax(120px, 180px) 1fr; gap: 14px; align-items: stretch; }
 .decision-status { display: flex; align-items: center; justify-content: center; border-radius: 8px; padding: 14px; font-weight: 900; font-size: 20px; }
 .decision-status.green, .decision-kpi.green { background: #064e3b; border-color: #10b981; }
-.decision-status.yellow, .decision-kpi.yellow { background: rgba(234, 179, 8, 0.16); border-color: #eab308; }
+.decision-status.yellow, .decision-kpi.yellow { background: var(--uuv-warning-bg); border-color: #eab308; color: var(--uuv-warning-text); }
 .decision-status.red, .decision-kpi.red { background: #7f1d1d; border-color: #ef4444; }
-.decision-status.gray, .decision-kpi.gray { background: #374151; border-color: #9ca3af; }
+.decision-status.green, .decision-kpi.green, .decision-status.red, .decision-kpi.red { color: #f9fafb; }
+.decision-status.gray, .decision-kpi.gray { background: var(--uuv-table-head-bg); border-color: var(--uuv-border-strong); color: var(--uuv-text); }
 .decision-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; margin-top: 14px; }
-.decision-kpi { border: 1px solid #475569; border-radius: 8px; padding: 10px; min-height: 76px; }
-.decision-kpi-label { color: #cbd5e1; font-size: 12px; font-weight: 700; }
+.decision-kpi { border: 1px solid var(--uuv-border-strong); border-radius: 8px; padding: 10px; min-height: 76px; color: var(--uuv-text); }
+.decision-kpi-label { color: var(--uuv-muted); font-size: 12px; font-weight: 700; }
 .decision-kpi-value { font-size: 20px; font-weight: 900; margin-top: 6px; }
-.decision-kpi-note { color: #e5e7eb; font-size: 12px; margin-top: 4px; }
+.decision-kpi-note { color: var(--uuv-text); font-size: 12px; margin-top: 4px; }
+.decision-kpi.green .decision-kpi-label, .decision-kpi.green .decision-kpi-note,
+.decision-kpi.green .decision-kpi-value,
+.decision-kpi.red .decision-kpi-label, .decision-kpi.red .decision-kpi-note,
+.decision-kpi.red .decision-kpi-value {
+  color: #e5e7eb;
+}
+.decision-kpi.yellow .decision-kpi-label, .decision-kpi.yellow .decision-kpi-note,
+.decision-kpi.yellow .decision-kpi-value {
+  color: var(--uuv-warning-text);
+}
+.planning-scope-radio .wrap {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  gap: 10px;
+}
+.planning-scope-radio label {
+  border: 1px solid var(--uuv-border-strong);
+  border-radius: 8px;
+  background: var(--uuv-table-head-bg);
+  color: var(--uuv-text);
+  font-weight: 800;
+  padding: 10px 12px;
+}
+.planning-scope-radio label:has(input:checked) {
+  background: #ef4444;
+  border-color: #f87171;
+  color: #f9fafb;
+}
 .executive-results-summary {
-  border: 1px solid #334155;
+  border: 1px solid var(--uuv-border);
   border-left: 3px solid #60a5fa;
   border-radius: 8px;
-  background: rgba(15, 23, 42, 0.72);
+  background: var(--uuv-panel-soft-bg);
+  color: var(--uuv-text);
   padding: 10px 12px;
   margin-top: 12px;
 }
-.executive-results-title { color: #cbd5e1; font-size: 12px; font-weight: 800; text-transform: uppercase; }
-.executive-results-text { color: #e5e7eb; font-size: 13px; line-height: 1.45; margin: 5px 0 0 0; }
+.executive-results-title { color: var(--uuv-muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+.executive-results-text { color: var(--uuv-text); font-size: 13px; line-height: 1.45; margin: 5px 0 0 0; }
 .detail-section-card h3 { margin-bottom: 6px; }
-.section-note { color: #cbd5e1; font-size: 13px; line-height: 1.45; margin: 0 0 10px 0; }
+.section-note { color: var(--uuv-muted); font-size: 13px; line-height: 1.45; margin: 0 0 10px 0; }
 .detail-table-wrap { margin-top: 10px; }
 .section-insight-card {
-  border: 1px solid #334155;
+  border: 1px solid var(--uuv-border);
   border-radius: 8px;
-  background: rgba(15, 23, 42, 0.55);
+  background: var(--uuv-panel-soft-bg);
+  color: var(--uuv-text);
   padding: 10px 12px;
   margin: 8px 0 10px 0;
 }
-.mini-title { color: #cbd5e1; font-size: 12px; font-weight: 800; margin-bottom: 8px; }
-.mini-caption { color: #e5e7eb; font-size: 12px; margin-top: 7px; }
-.mini-bar { position: relative; height: 14px; border-radius: 999px; overflow: hidden; background: #1f2937; border: 1px solid #475569; }
+.mini-title { color: var(--uuv-muted); font-size: 12px; font-weight: 800; margin-bottom: 8px; }
+.mini-caption { color: var(--uuv-text); font-size: 12px; margin-top: 7px; }
+.mini-bar { position: relative; height: 14px; border-radius: 999px; overflow: hidden; background: var(--uuv-table-head-bg); border: 1px solid var(--uuv-border-strong); }
 .mini-bar.secondary { margin-top: 6px; opacity: 0.92; }
 .mini-range { height: 24px; overflow: visible; margin: 16px 4px 20px 4px; }
 .mini-fill { display: inline-block; height: 100%; vertical-align: top; background: #60a5fa; }
 .mini-fill.planning { background: #60a5fa; }
 .mini-fill.conservative { background: #f87171; }
 .mini-fill.neutral { background: #94a3b8; }
-.mini-marker { position: absolute; top: -5px; height: 32px; border-left: 2px solid #e5e7eb; }
-.mini-marker span { position: absolute; top: 30px; left: -12px; color: #cbd5e1; font-size: 10px; font-weight: 800; }
+.mini-marker { position: absolute; top: -5px; height: 32px; border-left: 2px solid var(--uuv-marker); }
+.mini-marker span { position: absolute; top: 30px; left: -12px; color: var(--uuv-muted); font-size: 10px; font-weight: 800; }
 .report-plot label { display: none !important; }
 .report-visual-grid { gap: 12px; }
 .report-visual-card, .report-plot {
@@ -128,16 +214,17 @@ CUSTOM_CSS = """
   justify-content: center;
 }
 .report-map-card {
-  border: 1px solid #374151;
+  border: 1px solid var(--uuv-border);
   border-radius: 12px;
   padding: 12px;
-  background: #111827;
+  background: var(--uuv-panel-bg);
+  color: var(--uuv-text);
 }
 .report-map-card h3 { margin: 0 0 10px 0; }
 .report-map-card iframe { width: 100%; min-height: 410px; }
-.report-map-unavailable { min-height: 0; color: #cbd5e1; font-size: 13px; }
+.report-map-unavailable { min-height: 0; color: var(--uuv-muted); font-size: 13px; }
 .engineering-snapshot-caption {
-  color: #cbd5e1;
+  color: var(--uuv-muted);
   font-size: 12px;
   margin-top: -6px;
   padding: 0 4px 8px 4px;
@@ -146,32 +233,43 @@ CUSTOM_CSS = """
 .traceability-detail summary { cursor: pointer; font-weight: 800; padding: 10px 0; }
 .metoc-assessment, .metoc-panel, .metoc-card-grid { width: 100%; max-width: none; }
 .metoc-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.posture { font-weight: 800; font-size: 18px; padding: 8px 12px; border-radius: 10px; background: #1f2937; }
-.report-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 14px; }
+.metoc-provider-status { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.posture { font-weight: 800; font-size: 18px; padding: 8px 12px; border-radius: 10px; background: var(--uuv-table-head-bg); color: var(--uuv-text); }
+.report-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 14px; color: var(--uuv-text); }
 .report-table th, .report-table td {
-  border-bottom: 1px solid #374151;
+  border-bottom: 1px solid var(--uuv-border);
   padding: 8px 10px;
   text-align: left;
   vertical-align: top;
   word-wrap: break-word;
   overflow-wrap: anywhere;
+  color: var(--uuv-text);
 }
-.report-table th { background: #1f2937; }
+.report-table th { background: var(--uuv-table-head-bg); color: var(--uuv-heading); }
+.report-table tbody tr { background: var(--uuv-panel-bg); }
 .report-table .metric-col { width: 60%; }
 .report-table .value-col { width: 40%; }
 .metoc-grid, .metoc-card-grid { width: 100%; max-width: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
 .metoc-card { width: 100%; min-width: 0; max-width: none; border-radius: 10px; padding: 10px; min-height: 120px; border: 2px solid #4b5563; }
 .metoc-card.green { background: #064e3b; border-color: #10b981; }
-.metoc-card.yellow { background: rgba(234, 179, 8, 0.16); border-color: #eab308; }
+.metoc-card.yellow { background: var(--uuv-warning-bg); border-color: #eab308; color: var(--uuv-warning-text); }
 .metoc-card.red { background: #7f1d1d; border-color: #ef4444; }
-.metoc-card.gray { background: #374151; border-color: #9ca3af; }
+.metoc-card.green, .metoc-card.red { color: #f9fafb; }
+.metoc-card.gray { background: var(--uuv-table-head-bg); border-color: var(--uuv-border-strong); color: var(--uuv-text); }
 .metoc-title { font-weight: 800; font-size: 15px; }
 .metoc-level { font-weight: 900; font-size: 17px; margin: 6px 0; }
 .metoc-value { font-size: 14px; }
-.metoc-note { font-size: 12px; color: #e5e7eb; margin-top: 6px; }
+.metoc-note { font-size: 12px; color: var(--uuv-text); margin-top: 6px; }
+.metoc-card.green .metoc-title, .metoc-card.green .metoc-level, .metoc-card.green .metoc-value, .metoc-card.green .metoc-note,
+.metoc-card.red .metoc-title, .metoc-card.red .metoc-level, .metoc-card.red .metoc-value, .metoc-card.red .metoc-note {
+  color: #e5e7eb;
+}
+.metoc-card.yellow .metoc-title, .metoc-card.yellow .metoc-level, .metoc-card.yellow .metoc-value, .metoc-card.yellow .metoc-note {
+  color: var(--uuv-warning-text);
+}
 .gradio-container .plot-container, .gradio-container .js-plotly-plot { max-width: 100%; }
 .build-label {
-  color: #9ca3af;
+  color: var(--uuv-subtle);
   font-size: 12px;
   margin: -4px 0 10px 0;
 }
@@ -221,6 +319,8 @@ DETERMINISTIC_MODE = "Deterministic run"
 DEFAULT_MONTE_CARLO_RUNS = 1000
 MIN_MONTE_CARLO_RUNS = 10
 MAX_MONTE_CARLO_RUNS = 10000
+SINGLE_MISSION_SCOPE = "Single UUV mission"
+MULTI_MISSION_PLANNING_SCOPE = "Multi-mission planning"
 
 
 def select_workflow_tab(tab_id: str) -> Any:
@@ -245,6 +345,10 @@ def _mission_sequence_visibility(mission_type: str) -> Any:
 
 def _energy_equivalence_planning_basis(summary: dict[str, Any]) -> tuple[float, str]:
     """Choose the report energy value for the secondary equivalence lens."""
+    if _sustainment_projection_enabled(summary.get("sustainment_projection_enabled")):
+        projected_total = safe_float(summary.get("sustainment_total_conservative_energy_kwh"))
+        if projected_total is not None:
+            return projected_total, "Planning horizon total"
     for label, key in (
         ("Stress case", "conservative_stress_energy_kwh"),
         ("Planning recommendation", "recommended_planning_energy_kwh"),
@@ -257,6 +361,13 @@ def _energy_equivalence_planning_basis(summary: dict[str, Any]) -> tuple[float, 
     return 0.0, "Mission energy unavailable"
 
 
+def _sustainment_projection_enabled(value: object) -> bool:
+    """Return whether the operator selected the multi-mission planning scope."""
+    if isinstance(value, str):
+        return value == MULTI_MISSION_PLANNING_SCOPE
+    return bool(value)
+
+
 def mission_input_visibility(mission_type: str) -> tuple[Any, Any, Any, Any]:
     """Toggle simulator input groups by mission mode."""
     return (
@@ -267,9 +378,9 @@ def mission_input_visibility(mission_type: str) -> tuple[Any, Any, Any, Any]:
     )
 
 
-def sustainment_projection_visibility(enabled: bool) -> Any:
+def sustainment_projection_visibility(enabled: object) -> Any:
     """Show optional mission projection controls only when requested."""
-    return gr.update(visible=bool(enabled))
+    return gr.update(visible=_sustainment_projection_enabled(enabled))
 
 
 def simulation_mode_visibility(simulation_mode: str) -> tuple[Any, Any]:
@@ -524,7 +635,7 @@ def run_from_ui(
     planning_duration: str = "1 week",
     generator_efficiency: float = 0.84,
     payload_weight_kg: float = 0.0,
-    sustainment_projection_enabled: bool = False,
+    sustainment_projection_enabled: object = False,
     simulation_mode: str = MONTE_CARLO_MODE,
     monte_carlo_runs: int = DEFAULT_MONTE_CARLO_RUNS,
 ) -> tuple[Any, ...]:
@@ -565,9 +676,10 @@ def run_from_ui(
     environment = _apply_salinity_policy(environment, bool(context))
     vehicle = VEHICLE_CATALOG[platform_name]
     effective_mission_sequences = 1 if mission_type in ISR_MISSIONS else max(1, safe_int(mission_sequences, 1))
+    projection_enabled = _sustainment_projection_enabled(sustainment_projection_enabled)
     effective_operations_per_week = safe_float(operations_per_week, 1.0) or 1.0
     effective_planning_duration = str(planning_duration or "1 week")
-    if not sustainment_projection_enabled:
+    if not projection_enabled:
         effective_operations_per_week = 1.0
         effective_planning_duration = "1 week"
     simulation_area = area.aggregate_area() if isinstance(area, MissionAreaSet) and mission_type in SEARCH_MISSIONS else area
@@ -695,12 +807,12 @@ def run_from_ui(
         "manual_sea_surface_temp_c": safe_float(temp_mean_c),
         "battery_condition": str(battery_condition).lower(),
         "payload_weight_kg": safe_float(payload_weight_kg, 0.0) or 0.0,
-        "sustainment_projection_enabled": bool(sustainment_projection_enabled),
+        "sustainment_projection_enabled": projection_enabled,
         "operations_per_week": effective_operations_per_week,
         "planning_duration": effective_planning_duration,
         "generator_efficiency": safe_float(generator_efficiency, 0.84) or 0.84,
     }
-    summary["sustainment_projection_enabled"] = bool(sustainment_projection_enabled)
+    summary["sustainment_projection_enabled"] = projection_enabled
     energy_summary_html = build_detail_section_html(
         build_energy_summary_rows(summary),
         "Energy Detail",
@@ -713,12 +825,12 @@ def run_from_ui(
         (
             "Battery sufficiency compares the planning recommendation and stress case against usable inventory energy after reserve, temperature, and battery-condition assumptions. "
             "Single mission default is used because the optional sustainment projection lens is not enabled."
-            if not bool(sustainment_projection_enabled) and not bool(context)
+            if not projection_enabled and not bool(context)
             else "Battery sufficiency compares the planning recommendation and stress case against usable inventory energy after reserve, temperature, and battery-condition assumptions."
         ),
         build_battery_detail_helper(summary),
     )
-    if bool(sustainment_projection_enabled):
+    if projection_enabled:
         battery_sustainment_html += build_detail_section_html(
             build_sustainment_projection_rows(summary),
             "Sustainment Projection Lens",
@@ -744,14 +856,21 @@ def run_from_ui(
         build_environment_detail_helper(summary),
     )
     equivalence_energy_kwh, equivalence_basis = _energy_equivalence_planning_basis(summary)
+    energy_equivalence_title = "Energy Storage Equivalence Lens" if projection_enabled else "Energy Conversion"
+    energy_equivalence_note = (
+        "Energy-equivalence values are provided as a secondary sustainment-planning lens. Oil-equivalent values are approximate conversions and do not imply direct fuel interchangeability."
+        if projection_enabled
+        else "Energy conversion values use the single-mission stress case. Oil-equivalent values are approximate conversions and do not imply direct fuel interchangeability."
+    )
     energy_equivalence_html = build_detail_section_html(
         build_energy_equivalence_rows(
             equivalence_energy_kwh,
             equivalence_basis,
             float(summary.get("sustainment_fuel_gallons_equivalent") or 0.0),
         ),
-        "Energy Storage Equivalence Lens",
-        "Energy-equivalence values are provided as a secondary sustainment-planning lens. Oil-equivalent values are approximate conversions and do not imply direct fuel interchangeability.",
+        energy_equivalence_title,
+        energy_equivalence_note,
+        render_title=True,
     )
     fig_time = build_energy_time_chart(
         result.energy_samples_kwh,
@@ -894,7 +1013,12 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                 with gr.Row():
                     recharge_allowed = gr.Checkbox(label="Recharge / battery swap allowed if required", value=True)
                     mission_sequences = gr.Number(label="Mission sequences (route/search only)", value=1, precision=0, visible=False)
-                    sustainment_projection_enabled = gr.Checkbox(label="Mission sustainment projection lens", value=False)
+                    sustainment_projection_enabled = gr.Radio(
+                        [SINGLE_MISSION_SCOPE, MULTI_MISSION_PLANNING_SCOPE],
+                        value=SINGLE_MISSION_SCOPE,
+                        label="Planning scope",
+                        elem_classes=["planning-scope-radio"],
+                    )
                 sustainment_projection_group = gr.Group(visible=False)
                 with sustainment_projection_group:
                     gr.Markdown("### Sustainment Projection")
@@ -952,7 +1076,6 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                 mission_geometry_summary_table = gr.HTML("")
                 gr.Markdown("### Environmental Detail")
                 environmental_inputs_table = gr.HTML("")
-                gr.Markdown("### Energy Storage Equivalence Lens")
                 energy_equivalence_table = gr.HTML("")
                 search_overlay_plot = gr.Plot(label=None, show_label=False, elem_classes=["report-plot"], visible=False)
 

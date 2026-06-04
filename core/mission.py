@@ -32,7 +32,7 @@ def validate_mission_geometry(mission_type: str, area: MissionArea | MissionArea
             raise ValueError("Multi-area Search/MCM requires at least one search area.")
         return
     if mission_type in PAYLOAD_MISSIONS and not area.is_payload_route:
-        raise ValueError("Payload Delivery requires a line route. Draw a line from drop point to target site.")
+        raise ValueError("Route / Transit requires a line route. Draw a line route for route/transit planning.")
     if mission_type in SEARCH_MISSIONS and not area.is_search_area:
         raise ValueError(f"{mission_type} requires a rectangle or polygon search area.")
     if mission_type in ISR_MISSIONS and not (area.is_payload_route or area.is_search_area):

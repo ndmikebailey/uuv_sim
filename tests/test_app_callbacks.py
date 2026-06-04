@@ -209,8 +209,9 @@ class AppCallbackSmokeTests(unittest.TestCase):
                 self.assertNotIn("Battery sets P80", str(result[11]))
                 self.assertNotIn("Battery sets P95", str(result[11]))
                 self.assertNotIn("Available battery inventory", str(result[11]))
-                self.assertIn("Stress case", str(result[12]))
-                self.assertIn("Barrel-of-oil equivalent", str(result[12]))
+                self.assertIn("Energy Conversion", str(result[12]))
+                self.assertIn("<td>Stress case</td>", str(result[12]))
+                self.assertNotIn("Energy Storage Equivalence Lens", str(result[12]))
                 self.assertEqual(result[8]["visible"], True)
                 self.assertEqual(result[9]["visible"], True)
                 self.assertIn("Mission Map Overlay", str(result[9]["value"]))
@@ -268,7 +269,9 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertIn("Battery sets needed", str(result[11]))
         self.assertIn("Stress-case battery sets", str(result[11]))
         self.assertNotIn("METOC risk", str(result[11]))
-        self.assertIn("Stress case", str(result[12]))
+        self.assertIn("Energy Conversion", str(result[12]))
+        self.assertIn("<td>Stress case</td>", str(result[12]))
+        self.assertNotIn("Energy Storage Equivalence Lens", str(result[12]))
         self.assertEqual(result[8]["visible"], True)
         self.assertEqual(result[9]["visible"], True)
         self.assertIn("Mission Map Overlay", str(result[9]["value"]))
@@ -448,6 +451,33 @@ class AppCallbackSmokeTests(unittest.TestCase):
         html = main.metoc_html(EnvironmentData(), main.METOC_SERVICE)
         self.assertIn("metoc-assessment", html)
         self.assertIn("metoc-card-grid", html)
+
+    def test_report_css_declares_light_and_dark_table_contrast(self) -> None:
+        """Custom report tables should not inherit unreadable light-theme text."""
+        css = main.CUSTOM_CSS
+        self.assertIn(":root {\n  color-scheme: light dark;\n  --uuv-panel-bg: #ffffff", css)
+        self.assertIn("--uuv-panel-bg: #ffffff", css)
+        self.assertIn(".dark, [data-theme=\"dark\"], .gradio-container.dark", css)
+        self.assertIn("--uuv-panel-bg: #111827", css)
+        self.assertIn(".uuv-table { width: 100%; border-collapse: collapse; font-size: 14px; color: var(--uuv-text); }", css)
+        self.assertIn(".report-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 14px; color: var(--uuv-text); }", css)
+        self.assertIn(".uuv-table th { background: var(--uuv-table-head-bg); color: var(--uuv-heading); }", css)
+        self.assertIn(".report-table th { background: var(--uuv-table-head-bg); color: var(--uuv-heading); }", css)
+        self.assertIn(".uuv-table tbody tr { background: var(--uuv-panel-bg); }", css)
+        self.assertIn(".report-table tbody tr { background: var(--uuv-panel-bg); }", css)
+        self.assertIn(".decision-kpi.red .decision-kpi-value", css)
+        self.assertIn(".metoc-card.green .metoc-title, .metoc-card.green .metoc-level, .metoc-card.green .metoc-value, .metoc-card.green .metoc-note", css)
+        self.assertIn(".planning-scope-radio label", css)
+        self.assertIn("background: #ef4444", css)
+        self.assertIn("background: var(--uuv-table-head-bg)", css)
+
+    def test_leaflet_iframe_summary_uses_light_theme_by_default(self) -> None:
+        """Mission Builder map summary cards should not default to dark in light mode."""
+        html = main.build_leaflet_iframe("Guam")
+        self.assertIn("--map-shell-bg: #ffffff", html)
+        self.assertIn("html.light, body.light", html)
+        self.assertIn("syncColorTheme()", html)
+        self.assertIn("background:#ffffff", html)
 
     def test_small_energy_equivalents_do_not_round_to_zero(self) -> None:
         """Small secondary equivalence values should retain useful precision."""
@@ -800,8 +830,9 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertNotIn("width:100.0%", str(payload_run[5]))
         self.assertIn("report-table", str(payload_run[5]))
         self.assertIn("METOC Assessment", str(payload_run[13]))
+        self.assertIn("Energy Conversion", str(payload_run[12]))
+        self.assertIn("<td>Stress case</td>", str(payload_run[12]))
         self.assertNotIn("Energy Storage Equivalence Lens", str(payload_run[12]))
-        self.assertIn("Energy-equivalence values are provided as a secondary sustainment-planning lens", str(payload_run[12]))
         self.assertNotIn("Payload mission planning", str(payload_run[11]))
         executive_summary = self._executive_summary_text(payload_run[11])
         self.assertIn("Executive Results Summary", executive_summary)
@@ -849,11 +880,14 @@ class AppCallbackSmokeTests(unittest.TestCase):
         )
         self.assertIn("Sustainment Projection Lens", str(sustainment_run[3]))
         self.assertIn("The sustainment lens is an energy-flow projection", str(sustainment_run[3]))
+        self.assertIn("Energy Storage Equivalence Lens", str(sustainment_run[12]))
+        self.assertIn("Energy-equivalence values are provided as a secondary sustainment-planning lens", str(sustainment_run[12]))
+        self.assertIn("Planning horizon total", str(sustainment_run[12]))
         self.assertNotIn("dry-weight", str(payload_run[4]).lower())
         self.assertNotIn("dry weight", str(payload_run[4]).lower())
-        self.assertIn("Kilocalories", str(payload_run[12]))
-        self.assertIn("Gigajoules", str(payload_run[12]))
-        self.assertNotIn("0.0 GJ", str(payload_run[12]))
+        self.assertIn("Kilocalories", str(sustainment_run[12]))
+        self.assertIn("Gigajoules", str(sustainment_run[12]))
+        self.assertNotIn("0.0 GJ", str(sustainment_run[12]))
         self.assertEqual(payload_run[8]["visible"], True)
         self.assertIsNotNone(payload_run[8]["value"])
         self.assertIn("Engineering Snapshot", payload_run[8]["value"].axes[0].get_title())
@@ -1212,7 +1246,9 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertEqual(battery_detail.count("Battery and Sustainment Detail"), 0)
         self.assertEqual(geometry_detail.count("Mission Geometry Detail"), 0)
         self.assertEqual(environmental_detail.count("Environmental Detail"), 0)
-        self.assertEqual(energy_equivalence.count("Energy Storage Equivalence Lens"), 0)
+        self.assertIn("Energy Conversion", energy_equivalence)
+        self.assertIn("<td>Stress case</td>", energy_equivalence)
+        self.assertNotIn("Energy Storage Equivalence Lens", energy_equivalence)
         self.assertEqual(decision_and_traceability.count("Technical Traceability / Model Detail"), 1)
 
         distribution_labels = [text.get_text() for text in result[7].axes[0].get_legend().get_texts()]
@@ -1231,8 +1267,12 @@ class AppCallbackSmokeTests(unittest.TestCase):
         """Sustainment projection inputs should stay hidden until requested."""
         hidden = main.sustainment_projection_visibility(False)
         shown = main.sustainment_projection_visibility(True)
+        hidden_scope = main.sustainment_projection_visibility(main.SINGLE_MISSION_SCOPE)
+        shown_scope = main.sustainment_projection_visibility(main.MULTI_MISSION_PLANNING_SCOPE)
         self.assertEqual(hidden["visible"], False)
         self.assertEqual(shown["visible"], True)
+        self.assertEqual(hidden_scope["visible"], False)
+        self.assertEqual(shown_scope["visible"], True)
 
     def test_default_run_reports_single_mission_projection(self) -> None:
         """Unchecked sustainment lens should force a one-mission, one-week default."""
@@ -1266,6 +1306,9 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertEqual(result[10]["sustainment_missions_per_week"], 1.0)
         self.assertEqual(result[10]["sustainment_planning_weeks"], 1.0)
         self.assertEqual(result[10]["sustainment_total_missions"], 1.0)
+        self.assertIn("Energy Conversion", str(result[12]))
+        self.assertIn("<td>Stress case</td>", str(result[12]))
+        self.assertNotIn("Energy Storage Equivalence Lens", str(result[12]))
 
     def test_enabled_sustainment_projection_uses_operator_values(self) -> None:
         """Checked sustainment lens should use the editable projection values."""
@@ -1300,6 +1343,42 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertEqual(result[10]["sustainment_missions_per_week"], 2.0)
         self.assertEqual(result[10]["sustainment_planning_weeks"], 4.0)
         self.assertEqual(result[10]["sustainment_total_missions"], 8.0)
+        self.assertIn("Energy Storage Equivalence Lens", str(result[12]))
+        self.assertIn("Planning horizon total", str(result[12]))
+        self.assertNotIn("<td>Stress case</td>", str(result[12]))
+
+    def test_radio_sustainment_projection_uses_operator_values(self) -> None:
+        """Radio planning scope should behave the same as the legacy checked value."""
+        result = main.run_from_ui(
+            "REMUS 300 - 4.5 kWh",
+            "ISR",
+            10,
+            3,
+            3,
+            10,
+            0,
+            0,
+            200,
+            True,
+            3.5,
+            1,
+            True,
+            1,
+            "",
+            0.5,
+            90,
+            25,
+            {},
+            "Medium",
+            3,
+            "1 month",
+            0.84,
+            0,
+            main.MULTI_MISSION_PLANNING_SCOPE,
+        )
+        self.assertEqual(result[10]["sustainment_total_missions"], 12.0)
+        self.assertIn("Planning horizon total", str(result[12]))
+        self.assertIn("Fuel-equivalent estimate based on generator input energy", str(result[12]))
 
     def test_manual_search_area_derives_square_dimensions(self) -> None:
         """No-context manual area should control search dimensions."""

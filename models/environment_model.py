@@ -7,6 +7,29 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 
+def provider_status_text(error: Optional[str]) -> str:
+    """Return compact operator-facing provider status without long request URLs."""
+    if not error:
+        return "OK"
+    segments: list[str] = []
+    for raw_segment in str(error).replace("\n", " ").split(";"):
+        segment = raw_segment.strip()
+        if not segment:
+            continue
+        segment = segment.split(" for url:", 1)[0].strip()
+        segment = segment.replace(" Client Error:", "").replace("Client Error:", "").strip()
+        if len(segment) > 96:
+            segment = f"{segment[:93]}..."
+        if segment not in segments:
+            segments.append(segment)
+    if not segments:
+        return "Unavailable"
+    visible = "; ".join(segments[:3])
+    if len(segments) > 3:
+        visible += f"; {len(segments) - 3} more"
+    return f"Unavailable: {visible}"
+
+
 @dataclass
 class EnvironmentData:
     """Marine and weather conditions used by planning calculations."""
@@ -84,6 +107,8 @@ class EnvironmentData:
         rows = [
             ("Environment lookup latitude", centroid_lat, "deg"),
             ("Environment lookup longitude", centroid_lon, "deg"),
+            ("Marine status", provider_status_text(self.marine_error), ""),
+            ("Weather status", provider_status_text(self.weather_error), ""),
             ("Current speed mean", self.current_speed_kts_mean, "kts"),
             ("Current direction mean", self.current_direction_deg_mean, "deg"),
             ("Sea surface temperature", self.sea_surface_temp_c_mean, "deg C"),

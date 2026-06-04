@@ -14,7 +14,7 @@ from matplotlib.lines import Line2D
 
 from core.environment import current_components, payload_current_penalty
 from core.geometry import clipped_search_lanes, isr_path_distance_per_loop_km, local_bounds, search_polygon_points
-from models.environment_model import EnvironmentData
+from models.environment_model import EnvironmentData, provider_status_text
 from models.mission_model import MissionArea, MissionAreaSet
 from services.metoc_fusion import MetocFusionService
 from utils.constants import (
@@ -1548,6 +1548,8 @@ def build_environmental_input_rows(
         except (TypeError, ValueError):
             total_uplift_pct = ""
     rows = [
+        ("Marine status", provider_status_text(environment.marine_error), ""),
+        ("Weather status", provider_status_text(environment.weather_error), ""),
         ("Current speed", _float_or_blank(environment.current_speed_kts_mean), "kts"),
         ("Current direction", _float_or_blank(environment.current_direction_deg_mean), "deg"),
         ("Sea surface temperature", _float_or_blank(environment.sea_surface_temp_c_mean), "deg C"),
@@ -1618,6 +1620,17 @@ def build_energy_equivalence_rows(
 def metoc_html(environment: EnvironmentData, fusion_service: MetocFusionService) -> str:
     """Render METOC risk cards."""
     assessment = fusion_service.assessment(environment)
+    provider_rows = [
+        ("Marine", provider_status_text(environment.marine_error)),
+        ("Weather", provider_status_text(environment.weather_error)),
+    ]
+    provider_status = "".join(
+        f"<span><b>{escape(label)}:</b> {escape(status)}</span>"
+        for label, status in provider_rows
+        if status != "OK"
+    )
+    if provider_status:
+        provider_status = f"<div class='small-muted metoc-provider-status'>{provider_status}</div>"
     cards = []
     for name, level, color, value, unit, note in assessment["items"]:  # type: ignore[index]
         display = f"{fmt1(value)} {unit}".strip() if isinstance(value, (int, float)) else str(value)
@@ -1635,6 +1648,7 @@ def metoc_html(environment: EnvironmentData, fusion_service: MetocFusionService)
         <div>
           <h3>METOC Assessment</h3>
           <div class='small-muted'>FOR PLANNING ONLY. Open-Meteo environmental data are mission-planning inputs, not tactical METOC authority.</div>
+          {provider_status}
         </div>
         <div class='posture'>Overall: {assessment['posture']}</div>
       </div>
