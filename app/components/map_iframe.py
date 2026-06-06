@@ -4,16 +4,23 @@ from __future__ import annotations
 
 import html
 import json
+from uuid import uuid4
 
 from utils.constants import REGION_PRESETS
+
+
+def _render_token() -> str:
+    """Return a short token that forces browser iframe remounts between updates."""
+    return uuid4().hex
 
 
 def build_leaflet_iframe(region_name: str = "Guam") -> str:
     """Return a Leaflet iframe that emits raw geometry JSON to Gradio."""
     lat, lon, zoom = REGION_PRESETS.get(region_name, REGION_PRESETS["Guam"])
+    render_token = _render_token()
     inner_html = f"""
 <!DOCTYPE html>
-<html>
+<html data-uuv-render-token="{render_token}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -69,6 +76,10 @@ def build_leaflet_iframe(region_name: str = "Guam") -> str:
     .snap-label {{ color: var(--map-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }}
     .snap-value {{ color: var(--map-heading); font-size: 20px; font-weight: 800; margin-top: 3px; }}
     .snap-sub {{ color: var(--map-muted); font-size: 12px; margin-top: 6px; }}
+    @media (max-width: 720px) {{
+      #map {{ height: 500px; }}
+      .snap-grid {{ grid-template-columns: 1fr; }}
+    }}
   </style>
 </head>
 <body>
@@ -85,6 +96,7 @@ def build_leaflet_iframe(region_name: str = "Guam") -> str:
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
   <script>
+    const renderToken = "{render_token}";
     function syncColorTheme() {{
       try {{
         const parentDoc = window.parent && window.parent.document;
@@ -226,7 +238,7 @@ def build_leaflet_iframe(region_name: str = "Guam") -> str:
     function sendGeometry(summary) {{
       document.getElementById("raw_output").textContent = JSON.stringify(summary, null, 2);
       document.getElementById("output").innerHTML = snapshotHtml(summary);
-      window.parent.postMessage({{ type: "uuv_geometry", payload: summary }}, "*");
+      window.parent.postMessage({{ type: "uuv_geometry", payload: summary, renderToken: renderToken }}, "*");
     }}
     function summarizeLayer(layer) {{
       if (layer instanceof L.Rectangle) return rectangleSummary(layer);
@@ -288,10 +300,13 @@ def build_leaflet_iframe(region_name: str = "Guam") -> str:
     return f"""
 <iframe
   id="uuv_map_iframe"
+  class="uuv-map-iframe"
   title="uuv-mission-map"
+  name="uuv-mission-map-{render_token}"
+  data-uuv-render-token="{render_token}"
   srcdoc="{srcdoc}"
   width="100%"
-  height="700"
+  height="760"
   style="border:none; border-radius:12px; overflow:hidden; background:#ffffff;"
 ></iframe>
 """
@@ -307,6 +322,7 @@ def build_report_map_overlay_iframe(
     """Return a compact Leaflet report overlay for loaded GPS mission geometry."""
     if not geometry:
         return ""
+    render_token = _render_token()
     geometry_json = html.escape(json.dumps(geometry), quote=False)
     metoc_json = html.escape(json.dumps(metoc_points or []), quote=False)
     mission_type_json = html.escape(json.dumps(mission_type), quote=False)
@@ -314,7 +330,7 @@ def build_report_map_overlay_iframe(
     current_dir = 0.0 if current_direction_deg is None else float(current_direction_deg)
     inner_html = f"""
 <!DOCTYPE html>
-<html>
+<html data-uuv-render-token="{render_token}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -332,6 +348,7 @@ def build_report_map_overlay_iframe(
   <div class="legend">GPS geometry | METOC point(s) | Current vector</div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
+    const renderToken = "{render_token}";
     const geometry = {geometry_json};
     const metocPoints = {metoc_json};
     const missionType = {mission_type_json};
@@ -388,10 +405,13 @@ def build_report_map_overlay_iframe(
 """
     srcdoc = html.escape(inner_html, quote=True)
     return f"""
-<div class="report-visual-card report-map-card">
+<div class="report-visual-card report-map-card" data-uuv-render-token="{render_token}">
   <h3>Mission Map Overlay</h3>
   <iframe
+    class="uuv-report-map-iframe"
     title="uuv-report-map-overlay"
+    name="uuv-report-map-overlay-{render_token}"
+    data-uuv-render-token="{render_token}"
     srcdoc="{srcdoc}"
     width="100%"
     height="410"

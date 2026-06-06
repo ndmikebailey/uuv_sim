@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from typing import Any
+from uuid import uuid4
 
 import gradio as gr
 
@@ -124,6 +125,7 @@ CUSTOM_CSS = """
 .uuv-table tbody tr { background: var(--uuv-panel-bg); }
 .uuv-table .value { font-weight: 700; }
 .uuv-attribution, .small-muted { color: var(--uuv-subtle); font-size: 12px; margin-top: 8px; }
+.uuv-render-cycle { width: 100%; }
 .planner-summary {
   border-color: #2563eb;
   background: var(--uuv-panel-bg);
@@ -205,13 +207,20 @@ CUSTOM_CSS = """
 .mini-marker { position: absolute; top: -5px; height: 32px; border-left: 2px solid var(--uuv-marker); }
 .mini-marker span { position: absolute; top: 30px; left: -12px; color: var(--uuv-muted); font-size: 10px; font-weight: 800; }
 .report-plot label { display: none !important; }
-.report-visual-grid { gap: 12px; }
-.report-visual-card, .report-plot {
+.report-visual-grid {
+  gap: 12px;
+  align-items: stretch;
+}
+.report-visual-card {
+  width: 100%;
+  min-width: 0;
+  overflow: visible;
+}
+.report-plot {
   width: 100%;
   min-height: 470px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+  display: block;
+  overflow: visible;
 }
 .report-map-card {
   border: 1px solid var(--uuv-border);
@@ -219,9 +228,13 @@ CUSTOM_CSS = """
   padding: 12px;
   background: var(--uuv-panel-bg);
   color: var(--uuv-text);
+  box-sizing: border-box;
+  min-height: 0;
+  overflow: visible;
 }
 .report-map-card h3 { margin: 0 0 10px 0; }
-.report-map-card iframe { width: 100%; min-height: 410px; }
+.report-map-card iframe { width: 100%; height: 410px; min-height: 410px; display: block; }
+.report-map-output { width: 100%; }
 .report-map-unavailable { min-height: 0; color: var(--uuv-muted); font-size: 13px; }
 .engineering-snapshot-caption {
   color: var(--uuv-muted);
@@ -277,6 +290,32 @@ CUSTOM_CSS = """
 
 CUSTOM_JS = """
 function() {
+  function requestLayoutRefresh() {
+    const refresh = function() {
+      try {
+        window.dispatchEvent(new Event('resize'));
+        const doc = document.documentElement;
+        const body = document.body;
+        const root = document.querySelector('.gradio-container') || body;
+        const rootRect = root && root.getBoundingClientRect ? root.getBoundingClientRect() : { bottom: 0 };
+        const height = Math.ceil(Math.max(
+          doc ? doc.scrollHeight : 0,
+          body ? body.scrollHeight : 0,
+          rootRect.bottom || 0
+        ) + 32);
+        if (window.parentIFrame && typeof window.parentIFrame.size === 'function') {
+          window.parentIFrame.size(height);
+        }
+      } catch (error) {
+        console.log("Could not refresh UUV layout", error);
+      }
+    };
+    [0, 80, 240, 700].forEach(function(delay) {
+      window.setTimeout(function() { window.requestAnimationFrame(refresh); }, delay);
+    });
+  }
+  window.uuvRequestLayoutRefresh = requestLayoutRefresh;
+
   function setGeometryBox(text) {
     const box = document.querySelector('#geometry_json_box textarea');
     if (!box) return;
@@ -285,10 +324,49 @@ function() {
     box.dispatchEvent(new Event('input', { bubbles: true }));
     box.dispatchEvent(new Event('change', { bubbles: true }));
   }
-  window.addEventListener('message', function(event) {
+
+  if (window.__uuvGeometryMessageHandler) {
+    window.removeEventListener('message', window.__uuvGeometryMessageHandler);
+  }
+  window.__uuvGeometryMessageHandler = function(event) {
     if (!event.data || event.data.type !== 'uuv_geometry') return;
     setGeometryBox(JSON.stringify(event.data.payload || {}, null, 2));
-  });
+    requestLayoutRefresh();
+  };
+  window.addEventListener('message', window.__uuvGeometryMessageHandler);
+
+  if (!window.__uuvLayoutObserver) {
+    let layoutTimer = null;
+    const schedule = function() {
+      window.clearTimeout(layoutTimer);
+      layoutTimer = window.setTimeout(requestLayoutRefresh, 60);
+    };
+    const attachObserver = function() {
+      const root = document.querySelector('.gradio-container') || document.body;
+      if (!root) return;
+      window.__uuvLayoutObserver = new MutationObserver(schedule);
+      window.__uuvLayoutObserver.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['style', 'class', 'hidden', 'data-uuv-render-token']
+      });
+      document.addEventListener('click', function(event) {
+        const target = event.target;
+        if (target && target.closest && target.closest('button, [role="tab"]')) {
+          requestLayoutRefresh();
+        }
+      }, true);
+      requestLayoutRefresh();
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', attachObserver, { once: true });
+    } else {
+      attachObserver();
+    }
+  } else {
+    requestLayoutRefresh();
+  }
 }
 """
 
@@ -297,7 +375,8 @@ BUILD_MISSION_JS = """
   let text = geometryText || "";
   if (!text.trim()) {
     try {
-      const iframe = document.querySelector('#uuv_map_iframe');
+      const frames = Array.from(document.querySelectorAll('iframe.uuv-map-iframe, #uuv_map_iframe'));
+      const iframe = frames.reverse().find(frame => frame && frame.isConnected && frame.contentWindow);
       const raw = iframe && iframe.contentWindow && iframe.contentWindow.document.getElementById('raw_output');
       if (raw && (raw.innerText || raw.textContent || "").trim()) {
         text = raw.innerText || raw.textContent || "";
@@ -306,6 +385,7 @@ BUILD_MISSION_JS = """
       console.log("Could not read map iframe geometry output", e);
     }
   }
+  if (window.uuvRequestLayoutRefresh) window.uuvRequestLayoutRefresh();
   return [missionType, text];
 }
 """
@@ -321,6 +401,35 @@ MIN_MONTE_CARLO_RUNS = 10
 MAX_MONTE_CARLO_RUNS = 10000
 SINGLE_MISSION_SCOPE = "Single UUV mission"
 MULTI_MISSION_PLANNING_SCOPE = "Multi-mission planning"
+
+
+def _with_render_token(html_value: str, namespace: str) -> str:
+    """Wrap dynamic HTML so Gradio/browser state cannot reuse stale markup."""
+    if not html_value:
+        return html_value
+    token = f"{namespace}-{uuid4().hex}"
+    return f"<div class='uuv-render-cycle' data-uuv-render-token='{token}'>{html_value}</div>"
+
+
+def clear_results_before_run() -> tuple[Any, ...]:
+    """Clear dynamic report outputs before mounting a fresh simulation result."""
+    return (
+        "Preparing a fresh results render...",
+        DEFAULT_RESULTS_BUTTON_UPDATE,
+        "",
+        "",
+        "",
+        "",
+        gr.update(value=None),
+        gr.update(value=None),
+        gr.update(value=None, visible=False),
+        gr.update(value="", visible=False),
+        {},
+        _with_render_token("<div class='uuv-card'>Running mission simulation...</div>", "results-cleared"),
+        "",
+        "",
+        "",
+    )
 
 
 def select_workflow_tab(tab_id: str) -> Any:
@@ -444,7 +553,10 @@ def _report_map_overlay_update(
         geometry_payload = json.loads(geometry)
     except (TypeError, ValueError):
         return gr.update(
-            value="<div class='report-visual-card report-map-card report-map-unavailable'>Map overlay unavailable; engineering geometry snapshot shown.</div>",
+            value=_with_render_token(
+                "<div class='report-visual-card report-map-card report-map-unavailable'>Map overlay unavailable; engineering geometry snapshot shown.</div>",
+                "report-map-unavailable",
+            ),
             visible=True,
         )
     overlay = build_report_map_overlay_iframe(
@@ -456,17 +568,23 @@ def _report_map_overlay_update(
     )
     if not overlay:
         return gr.update(
-            value="<div class='report-visual-card report-map-card report-map-unavailable'>Map overlay unavailable; engineering geometry snapshot shown.</div>",
+            value=_with_render_token(
+                "<div class='report-visual-card report-map-card report-map-unavailable'>Map overlay unavailable; engineering geometry snapshot shown.</div>",
+                "report-map-unavailable",
+            ),
             visible=True,
         )
-    return gr.update(value=overlay, visible=True)
+    return gr.update(value=_with_render_token(overlay, "report-map"), visible=True)
 
 
 def build_mission_and_prefill(mission_type: str, geometry_json_text: str) -> tuple[Any, ...]:
     """Build a mission context and prefill simulator inputs."""
     result = build_mission_context(mission_type, geometry_json_text, METOC_SERVICE)
     df = rows_to_dataframe(result.environment_rows, ("Environmental / Geometry Item", "Value", "Unit"))
-    html = env_table_to_html(result.environment_rows, "Mission Geometry and Environmental Data" if result.ok else "Mission Build Status")
+    html = _with_render_token(
+        env_table_to_html(result.environment_rows, "Mission Geometry and Environmental Data" if result.ok else "Mission Build Status"),
+        "mission-env",
+    )
     if not result.ok or result.context is None:
         return (
             {},
@@ -908,19 +1026,19 @@ def run_from_ui(
     return (
         status,
         ACTIVE_RESULTS_BUTTON_UPDATE,
-        energy_summary_html,
-        battery_sustainment_html,
-        mission_geometry_html,
-        environmental_inputs_html,
+        _with_render_token(energy_summary_html, "energy-detail"),
+        _with_render_token(battery_sustainment_html, "battery-detail"),
+        _with_render_token(mission_geometry_html, "geometry-detail"),
+        _with_render_token(environmental_inputs_html, "environment-detail"),
         fig_time,
         fig_dist,
         primary_visual_update,
         overlay_update,
         summary,
-        build_energy_planner_summary_html(summary, area, environment, vehicle),
-        energy_equivalence_html,
-        metoc_html(environment, METOC_SERVICE),
-        engineering_snapshot_caption,
+        _with_render_token(build_energy_planner_summary_html(summary, area, environment, vehicle), "results-card"),
+        _with_render_token(energy_equivalence_html, "energy-equivalence"),
+        _with_render_token(metoc_html(environment, METOC_SERVICE), "metoc-results"),
+        _with_render_token(engineering_snapshot_caption, "engineering-caption"),
     )
 
 
@@ -1057,12 +1175,12 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                 gr.HTML("<div id='results-anchor'></div>")
                 results_card = gr.HTML("<div class='uuv-card'>Run a mission simulation to populate results.</div>")
                 metoc_results_card = gr.HTML("")
-                with gr.Row(equal_height=True, elem_classes=["report-visual-grid"]):
+                with gr.Row(elem_classes=["report-visual-grid"]):
                     with gr.Column(scale=1, min_width=360, elem_classes=["report-visual-card"]):
-                        report_map_overlay = gr.HTML("", visible=False, elem_classes=["report-map-card"])
+                        report_map_overlay = gr.HTML("", visible=False, elem_classes=["report-map-output"])
                     with gr.Column(scale=1, min_width=360, elem_classes=["report-visual-card"]):
                         results_plot = gr.Plot(label=None, show_label=False, elem_classes=["report-plot"])
-                with gr.Row(equal_height=True, elem_classes=["report-visual-grid"]):
+                with gr.Row(elem_classes=["report-visual-grid"]):
                     with gr.Column(scale=1, min_width=360, elem_classes=["report-visual-card"]):
                         mission_map_snapshot_plot = gr.Plot(label=None, show_label=False, elem_classes=["report-plot"], visible=True)
                         engineering_snapshot_caption_html = gr.HTML("")
@@ -1115,60 +1233,69 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
             inputs=None,
             outputs=[workflow_tabs],
         )
+        run_inputs = [
+            platform_select,
+            mission_type_sim,
+            manual_area_km2,
+            width_km,
+            height_km,
+            route_distance_km,
+            route_heading_deg,
+            additional_transit_km,
+            track_spacing_m,
+            return_to_start,
+            speed_kts,
+            battery_sets_available,
+            recharge_allowed,
+            mission_sequences,
+            rng_seed,
+            current_mean,
+            current_dir,
+            temp_mean,
+            mission_context_state,
+            battery_condition,
+            operations_per_week,
+            planning_duration,
+            generator_efficiency,
+            payload_weight,
+            sustainment_projection_enabled,
+            simulation_mode,
+            monte_carlo_runs_input,
+        ]
+        run_outputs = [
+            run_status,
+            view_results_button,
+            energy_summary_table,
+            battery_sustainment_table,
+            mission_geometry_summary_table,
+            environmental_inputs_table,
+            energy_time_plot,
+            results_plot,
+            mission_map_snapshot_plot,
+            report_map_overlay,
+            sim_results_state,
+            results_card,
+            energy_equivalence_table,
+            metoc_results_card,
+            engineering_snapshot_caption_html,
+        ]
         run_btn.click(
+            clear_results_before_run,
+            inputs=None,
+            outputs=run_outputs,
+            queue=False,
+        ).then(
             run_from_ui,
-            inputs=[
-                platform_select,
-                mission_type_sim,
-                manual_area_km2,
-                width_km,
-                height_km,
-                route_distance_km,
-                route_heading_deg,
-                additional_transit_km,
-                track_spacing_m,
-                return_to_start,
-                speed_kts,
-                battery_sets_available,
-                recharge_allowed,
-                mission_sequences,
-                rng_seed,
-                current_mean,
-                current_dir,
-                temp_mean,
-                mission_context_state,
-                battery_condition,
-                operations_per_week,
-                planning_duration,
-                generator_efficiency,
-                payload_weight,
-                sustainment_projection_enabled,
-                simulation_mode,
-                monte_carlo_runs_input,
-            ],
-            outputs=[
-                run_status,
-                view_results_button,
-                energy_summary_table,
-                battery_sustainment_table,
-                mission_geometry_summary_table,
-                environmental_inputs_table,
-                energy_time_plot,
-                results_plot,
-                mission_map_snapshot_plot,
-                report_map_overlay,
-                sim_results_state,
-                results_card,
-                energy_equivalence_table,
-                metoc_results_card,
-                engineering_snapshot_caption_html,
-            ],
+            inputs=run_inputs,
+            outputs=run_outputs,
+            trigger_mode="once",
         )
         view_results_button.click(
             lambda: select_workflow_tab("results"),
             inputs=None,
             outputs=[workflow_tabs],
         )
+        demo.queue(default_concurrency_limit=1)
     return demo
 
 demo = create_demo()
@@ -1176,6 +1303,9 @@ demo = create_demo()
 
 def launch(**kwargs) -> None:
     """Launch the Gradio app."""
+    kwargs.setdefault("server_name", "0.0.0.0")
+    kwargs.setdefault("show_error", True)
+    kwargs.setdefault("ssr_mode", False)
     demo.launch(
         css=CUSTOM_CSS,
         js=CUSTOM_JS,

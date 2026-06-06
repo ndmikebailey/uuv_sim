@@ -4,11 +4,11 @@ version = "3.5.0b0"
 description = "Research UUV mission planning and energy simulation tool"
 requires-python = ">=3.10"
 dependencies = [
-  "gradio",
-  "matplotlib",
-  "numpy",
-  "pandas",
-  "requests",
+  "gradio==6.16.0",
+  "matplotlib==3.10.9",
+  "numpy==2.4.4",
+  "pandas==3.0.2",
+  "requests==2.33.1",
 ]
 
 [tool.pytest.ini_options]

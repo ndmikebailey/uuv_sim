@@ -967,15 +967,63 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertIn("gr.Plot(label=None, show_label=False", main_text)
         self.assertIn('elem_classes=["report-plot"]', main_text)
         self.assertIn(".report-plot label { display: none !important; }", main.CUSTOM_CSS)
+        self.assertIn(".uuv-render-cycle", main.CUSTOM_CSS)
         self.assertIn("report-visual-grid", main_text)
         self.assertIn("report-visual-card", main_text)
         self.assertIn("report-map-card", main_text)
-        self.assertIn("equal_height=True", main_text)
+        self.assertNotIn("equal_height=True", main_text)
+        self.assertIn("uuvRequestLayoutRefresh", main_text)
+        self.assertIn("clear_results_before_run", main_text)
+        self.assertIn("queue=False", main_text)
+        self.assertIn('trigger_mode="once"', main_text)
+        self.assertIn("demo.queue(default_concurrency_limit=1)", main_text)
+        self.assertIn('kwargs.setdefault("server_name", "0.0.0.0")', main_text)
+        self.assertIn('kwargs.setdefault("ssr_mode", False)', main_text)
         self.assertNotIn('gr.Plot(label="Mission Visual Summary"', main_text)
         self.assertNotIn('gr.Plot(label="Mission Energy Progress and Battery Lens"', main_text)
         self.assertNotIn('gr.Plot(label="Mission Energy Uncertainty Distribution"', main_text)
         self.assertNotIn("Energy Planner CSV Export", Path("app/main.py").read_text(encoding="utf-8"))
         self.assertNotIn("Manual salinity", Path("app/main.py").read_text(encoding="utf-8"))
+
+    def test_space_and_package_gradio_pins_match(self) -> None:
+        """HF Space metadata and Python dependency files should pin the same Gradio build."""
+        readme = Path("README.md").read_text(encoding="utf-8")
+        requirements = Path("requirements.txt").read_text(encoding="utf-8")
+        pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn("sdk_version: 6.16.0", readme)
+        self.assertIn("gradio==6.16.0", requirements)
+        self.assertIn('"gradio==6.16.0"', pyproject)
+
+    def test_clear_results_before_run_matches_result_output_contract(self) -> None:
+        """The stale-DOM guard should clear every dynamic Results output before a run."""
+        cleared = main.clear_results_before_run()
+        self.assertEqual(len(cleared), 15)
+        self.assertIn("fresh results render", cleared[0])
+        self.assertEqual(cleared[1]["interactive"], False)
+        self.assertEqual(cleared[2], "")
+        self.assertEqual(cleared[5], "")
+        self.assertEqual(cleared[8]["visible"], False)
+        self.assertEqual(cleared[9]["visible"], False)
+        self.assertEqual(cleared[10], {})
+        self.assertIn("uuv-render-cycle", cleared[11])
+
+    def test_dynamic_html_outputs_are_render_tokened(self) -> None:
+        """Repeated report renders should produce fresh HTML for Gradio/browser remounts."""
+        first = main._with_render_token("<div>Report</div>", "test")
+        second = main._with_render_token("<div>Report</div>", "test")
+        self.assertIn("uuv-render-cycle", first)
+        self.assertIn("data-uuv-render-token='test-", first)
+        self.assertNotEqual(first, second)
+
+    def test_leaflet_iframes_include_render_tokens(self) -> None:
+        """Mission and report map iframes should not be reused as stale DOM nodes."""
+        builder_html = main.build_leaflet_iframe("Guam")
+        report_html = main.build_report_map_overlay_iframe(RECTANGLE_GEOMETRY, "ISR")
+        self.assertIn("data-uuv-render-token", builder_html)
+        self.assertIn("class=\"uuv-map-iframe\"", builder_html)
+        self.assertIn("height=\"760\"", builder_html)
+        self.assertIn("data-uuv-render-token", report_html)
+        self.assertIn("class=\"uuv-report-map-iframe\"", report_html)
 
     def test_loaded_mission_text_is_mode_specific(self) -> None:
         """Loaded mission text should avoid payload/ISR centroid and search leakage."""
