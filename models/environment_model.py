@@ -71,6 +71,8 @@ class EnvironmentData:
     salinity_provider_detail: str = ""
     salinity_validation_status: str = ""
     source: str = "Open-Meteo"
+    requested_at_utc: str = ""
+    valid_at_utc: str = ""
     loaded_at_utc: str = ""
 
     def __post_init__(self) -> None:
@@ -107,6 +109,8 @@ class EnvironmentData:
         rows = [
             ("Environment lookup latitude", centroid_lat, "deg"),
             ("Environment lookup longitude", centroid_lon, "deg"),
+            ("Requested environment time", self.requested_at_utc or "Current conditions", "UTC"),
+            ("Environment valid time", self.valid_at_utc or "Provider current time", "UTC"),
             ("Marine status", provider_status_text(self.marine_error), ""),
             ("Weather status", provider_status_text(self.weather_error), ""),
             ("Current speed mean", self.current_speed_kts_mean, "kts"),

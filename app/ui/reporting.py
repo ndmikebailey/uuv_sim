@@ -860,7 +860,30 @@ def _mission_planning_note(summary: dict[str, object], area: MissionArea, enviro
     return None
 
 
-def build_energy_planner_summary_html(summary: dict[str, object], area: MissionArea, environment: EnvironmentData, vehicle: object | None = None) -> str:
+def _sustainment_outlook_html(summary: dict[str, object]) -> str:
+    """Render the selected multi-mission outlook near the top of the report."""
+    if not bool(summary.get("sustainment_projection_enabled")):
+        return ""
+    weeks = _as_float(summary.get("sustainment_planning_weeks")) or 0.0
+    missions = _as_float(summary.get("sustainment_total_missions")) or 0.0
+    total_energy = _as_float(summary.get("sustainment_total_conservative_energy_kwh")) or 0.0
+    cycles = _as_float(summary.get("sustainment_inventory_cycles_required")) or 0.0
+    generator_energy = _as_float(summary.get("sustainment_generator_input_energy_kwh")) or 0.0
+    return f"""
+    <div class='section-insight-card sustainment-outlook'>
+      <h3>Sustainment Outlook</h3>
+      <div class='decision-kpi-grid'>
+        <div class='decision-kpi gray'><div class='decision-kpi-label'>Planning horizon</div><div class='decision-kpi-value'>{fmt1(weeks)} weeks</div></div>
+        <div class='decision-kpi gray'><div class='decision-kpi-label'>Projected missions</div><div class='decision-kpi-value'>{fmt1(missions)}</div></div>
+        <div class='decision-kpi gray'><div class='decision-kpi-label'>Projected mission energy</div><div class='decision-kpi-value'>{fmt1(total_energy)} kWh</div></div>
+        <div class='decision-kpi gray'><div class='decision-kpi-label'>Inventory cycles</div><div class='decision-kpi-value'>{fmt1(cycles)}</div></div>
+        <div class='decision-kpi gray'><div class='decision-kpi-label'>Generator input energy</div><div class='decision-kpi-value'>{fmt1(generator_energy)} kWh</div></div>
+      </div>
+    </div>
+    """
+
+
+def build_energy_planner_summary_html(summary: dict[str, object], area: MissionArea | MissionAreaSet, environment: EnvironmentData, vehicle: object | None = None) -> str:
     """
     Build the top decision brief plus lower technical traceability.
 
@@ -869,6 +892,7 @@ def build_energy_planner_summary_html(summary: dict[str, object], area: MissionA
     status, recommendation = _plain_status_text(summary)
     kpis = _decision_kpis(summary, environment)
     executive_summary = _executive_results_summary_html(summary, environment)
+    sustainment_outlook = _sustainment_outlook_html(summary)
     decision_html = f"""
     <div class='uuv-card planner-summary mission-decision-brief'>
       <h2>Mission Decision Brief</h2>
@@ -880,6 +904,7 @@ def build_energy_planner_summary_html(summary: dict[str, object], area: MissionA
         </div>
       </div>
       {executive_summary}
+      {sustainment_outlook}
       <div class='decision-kpi-grid'>{''.join(kpis)}</div>
     </div>
     """
@@ -1526,6 +1551,7 @@ def build_mission_geometry_summary_rows(
             ("Track spacing", _float_or_blank(simulation_inputs.get("track_spacing_m") or summary.get("track_spacing_m")), "m"),
             ("Recommended orientation", orientation, ""),
             ("Active search/survey distance", _float_or_blank(summary.get("search_active_survey_distance_km") or summary.get("search_track_distance_km")), "km"),
+            ("Transit between search areas", _float_or_blank(summary.get("search_inter_area_transit_distance_km")), "km"),
             ("Additional transit distance", _float_or_blank(summary.get("search_additional_transit_distance_km") or summary.get("additional_transit_km")), "km"),
             ("Active search/survey duration", _float_or_blank(summary.get("search_active_survey_duration_mean_hr")), "hr"),
             ("Additional transit duration", _float_or_blank(summary.get("search_additional_transit_duration_mean_hr")), "hr"),
@@ -1552,6 +1578,8 @@ def build_environmental_input_rows(
         except (TypeError, ValueError):
             total_uplift_pct = ""
     rows = [
+        ("Requested environment time", environment.requested_at_utc or "Current conditions", "UTC"),
+        ("Environment valid time", environment.valid_at_utc or "Provider current time", "UTC"),
         ("Marine status", provider_status_text(environment.marine_error), ""),
         ("Weather status", provider_status_text(environment.weather_error), ""),
         ("Current speed", _float_or_blank(environment.current_speed_kts_mean), "kts"),
@@ -2169,6 +2197,9 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea |
         lon0 = sum(vertex.lon for vertex in all_vertices) / len(all_vertices)
         cos_lat0 = max(abs(math.cos(math.radians(lat0))), 1e-6)
         all_points: list[tuple[float, float]] = []
+        area_centers: list[tuple[float, float]] = []
+        orientation = str(summary.get("recommended_track_orientation", "East-West"))
+        lane_label_used = False
         for index, search_area in enumerate(area.areas, start=1):
             points = [
                 (
@@ -2185,8 +2216,43 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea |
             ax.plot(xs, ys, color="#075985", linewidth=2.0)
             cx = sum(point[0] for point in points) / len(points)
             cy = sum(point[1] for point in points) / len(points)
+            area_centers.append((cx, cy))
             ax.text(cx, cy, f"A{index}", ha="center", va="center", fontsize=9, fontweight="bold")
+            local_points = search_polygon_points(search_area)
+            if len(local_points) == len(points):
+                offset_x = sum(
+                    global_point[0] - local_point[0]
+                    for global_point, local_point in zip(points, local_points)
+                ) / len(points)
+                offset_y = sum(
+                    global_point[1] - local_point[1]
+                    for global_point, local_point in zip(points, local_points)
+                ) / len(points)
+                lanes = clipped_search_lanes(search_area, track_spacing_m, orientation)
+                for segment in lanes.get("segments", []):
+                    x0, y0, x1, y1 = segment
+                    ax.plot(
+                        [x0 + offset_x, x1 + offset_x],
+                        [y0 + offset_y, y1 + offset_y],
+                        color="#0f766e",
+                        linewidth=1.15,
+                        alpha=0.72,
+                        label="Search lanes" if not lane_label_used else "_nolegend_",
+                    )
+                    lane_label_used = True
             all_points.extend(points)
+        if len(area_centers) > 1:
+            ax.plot(
+                [point[0] for point in area_centers],
+                [point[1] for point in area_centers],
+                color="#f97316",
+                linewidth=1.8,
+                linestyle="--",
+                marker="o",
+                markersize=3,
+                alpha=0.82,
+                label="Inter-area transit",
+            )
         if not all_points:
             ax.text(0.5, 0.5, "Multi-area search snapshot is unavailable for this geometry.", ha="center", va="center", wrap=True, transform=ax.transAxes)
             ax.axis("off")
@@ -2203,7 +2269,8 @@ def build_mapping_snapshot_chart(summary: dict[str, object], area: MissionArea |
             0.025,
             (
                 f"Areas: {fmt_int(len(area.areas))} | Total area: {fmt1(area.total_area_km2)} sq km | "
-                "Swath overlay currently shown for aggregate planning; per-area lane rendering is simplified."
+                f"Inter-area transit: {fmt1(summary.get('search_inter_area_transit_distance_km'))} km | "
+                f"Lanes: {orientation}"
             ),
             ha="center",
             va="bottom",

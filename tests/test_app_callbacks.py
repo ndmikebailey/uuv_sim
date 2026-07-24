@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import shutil
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -20,8 +21,10 @@ from app.ui.reporting import (
     build_energy_planner_summary_html,
     build_sustainment_projection_rows,
 )
+from core.energy import multi_area_search_plan, multi_area_transit_distance_km, search_plan
 from core.geometry import manual_rectangle_area
 from models.environment_model import EnvironmentData
+from models.mission_model import MissionAreaSet
 from utils.constants import APP_VERSION, ENERGY_MODEL_VERSION
 
 
@@ -128,12 +131,17 @@ class AppCallbackSmokeTests(unittest.TestCase):
         """Install deterministic METOC service."""
         self._original_metoc = main.METOC_SERVICE
         main.METOC_SERVICE = FakeMetocService()  # type: ignore[assignment]
+        self._existing_artifact_dirs = set(
+            Path(tempfile.gettempdir()).glob("uuv_sim_*")
+        )
 
     def tearDown(self) -> None:
         """Restore globals and remove generated run artifacts."""
         main.METOC_SERVICE = self._original_metoc
         plt.close("all")
         shutil.rmtree("runs", ignore_errors=True)
+        for path in set(Path(tempfile.gettempdir()).glob("uuv_sim_*")) - self._existing_artifact_dirs:
+            shutil.rmtree(path, ignore_errors=True)
 
     def _run_isr_geometry(self, geometry: dict[str, object]) -> tuple[dict[str, object], tuple[object, ...]]:
         built = main.build_mission_and_prefill("ISR", json.dumps(geometry))
@@ -174,7 +182,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
         for geometry in [RECTANGLE_GEOMETRY, CONVEX_POLYGON_GEOMETRY, CONCAVE_POLYGON_GEOMETRY]:
             with self.subTest(geometry=geometry["geometry_type"]):
                 _, result = self._run_isr_geometry(geometry)
-                self.assertEqual(len(result), 15)
+                self.assertEqual(len(result), 17)
                 self.assertIn("ISR endurance estimate", str(result[0]))
                 self.assertEqual(result[1]["value"], "Go to Results")
                 self.assertEqual(result[1]["interactive"], True)
@@ -218,9 +226,10 @@ class AppCallbackSmokeTests(unittest.TestCase):
                 self.assertIn("report-visual-card report-map-card", str(result[9]["value"]))
                 self.assertIn("uuv-report-map-overlay", str(result[9]["value"]))
                 self.assertIn("Engineering Snapshot", result[8]["value"].axes[0].get_title())
-                csv_files = sorted(Path("runs").glob("*_energy_planner.csv"))
-                self.assertTrue(csv_files)
-                with csv_files[-1].open(newline="", encoding="utf-8") as handle:
+                csv_path = Path(str(result[10]["_csv_path"]))
+                self.assertTrue(csv_path.is_file())
+                self.assertNotEqual(csv_path.parent.resolve(), Path("runs").resolve())
+                with csv_path.open(newline="", encoding="utf-8") as handle:
                     record = next(csv.DictReader(handle))
                 self.assertEqual(record["app_version"], APP_VERSION)
                 self.assertEqual(record["model_version"], ENERGY_MODEL_VERSION)
@@ -228,7 +237,9 @@ class AppCallbackSmokeTests(unittest.TestCase):
                 self.assertTrue(record["metoc_lookup_lat"])
                 self.assertTrue(record["metoc_lookup_lon"])
                 self.assertTrue(record["isr_loop_distance_km"])
-                self.assertIn("energy_planner", str(csv_files[-1]))
+                self.assertIn("energy_planner", str(csv_path))
+                self.assertTrue(Path(str(result[10]["_report_path"])).is_file())
+                self.assertTrue(Path(str(result[10]["_package_path"])).is_file())
 
     def test_area_search_reports_search_orientation(self) -> None:
         """Area Search / MCM should remain the swath-search mission mode."""
@@ -364,6 +375,28 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertIn("Number of search areas", str(result[4]))
         self.assertIn("METOC sampled points", str(result[4]))
         self.assertIn("section-insight-card", str(result[4]))
+        area_set = MissionAreaSet.from_dict(built[0]["area"])
+        heading = 0 if summary["recommended_track_orientation"] == "North-South" else 90
+        preserved_plan = multi_area_search_plan(area_set, 200, heading)
+        side_km = area_set.total_area_km2 ** 0.5
+        equivalent_plan = search_plan(
+            manual_rectangle_area(side_km, side_km, area_set.total_area_km2),
+            200,
+            heading,
+        )
+        self.assertAlmostEqual(
+            float(summary["search_track_distance_km"]),
+            preserved_plan.track_distance_km,
+        )
+        self.assertAlmostEqual(
+            float(summary["search_inter_area_transit_distance_km"]),
+            multi_area_transit_distance_km(area_set),
+        )
+        self.assertGreater(float(summary["search_inter_area_transit_distance_km"]), 0.0)
+        self.assertGreater(
+            abs(preserved_plan.track_distance_km - equivalent_plan.track_distance_km),
+            0.01,
+        )
 
     def test_isr_reports_single_set_and_total_inventory_endurance(self) -> None:
         """ISR should distinguish installed-set endurance from total available inventory."""
@@ -804,7 +837,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
             26,
             payload[0],
         )
-        self.assertEqual(len(payload_run), 15)
+        self.assertEqual(len(payload_run), 17)
         self.assertNotIn("Recommended track orientation", str(payload_run[0]))
         self.assertEqual(payload_run[1]["value"], "Go to Results")
         self.assertEqual(payload_run[1]["interactive"], True)
@@ -976,7 +1009,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertIn("clear_results_before_run", main_text)
         self.assertIn("queue=False", main_text)
         self.assertIn('trigger_mode="once"', main_text)
-        self.assertIn("demo.queue(default_concurrency_limit=1)", main_text)
+        self.assertIn("demo.queue(default_concurrency_limit=4)", main_text)
         self.assertIn('kwargs.setdefault("server_name", "0.0.0.0")', main_text)
         self.assertIn('kwargs.setdefault("ssr_mode", False)', main_text)
         self.assertNotIn('gr.Plot(label="Mission Visual Summary"', main_text)
@@ -1207,7 +1240,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertEqual(deterministic[10]["monte_carlo_runs"], 1)
         self.assertNotIn("Invalid seed", str(deterministic[0]))
 
-    def test_v4_report_hierarchy_keeps_percentiles_in_traceability(self) -> None:
+    def test_v1_report_hierarchy_keeps_percentiles_in_traceability(self) -> None:
         """Main report should stay decision-focused while traceability keeps percentile details."""
         result = main.run_from_ui(
             "REMUS 300 - 4.5 kWh",
@@ -1394,6 +1427,165 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertIn("Energy Storage Equivalence Lens", str(result[12]))
         self.assertIn("Planning horizon total", str(result[12]))
         self.assertNotIn("<td>Stress case</td>", str(result[12]))
+
+    def test_six_month_projection_is_prominent_in_report(self) -> None:
+        """The thesis six-month outlook should appear near the top of the report."""
+        result = main.run_from_ui(
+            "REMUS 300 - 4.5 kWh",
+            "Route / Transit",
+            10,
+            3,
+            3,
+            10,
+            0,
+            0,
+            200,
+            True,
+            3.5,
+            2,
+            True,
+            1,
+            "12345",
+            0.5,
+            90,
+            25,
+            {},
+            "Medium",
+            3,
+            "6 months",
+            0.84,
+            0,
+            main.MULTI_MISSION_PLANNING_SCOPE,
+        )
+        self.assertEqual(main._planning_weeks("6 months"), 26.0)
+        self.assertEqual(result[10]["sustainment_planning_weeks"], 26.0)
+        self.assertEqual(result[10]["sustainment_total_missions"], 78.0)
+        report = str(result[11])
+        self.assertLess(report.index("Mission Decision Brief"), report.index("Sustainment Outlook"))
+        self.assertLess(report.index("Sustainment Outlook"), report.index("Technical Traceability / Model Detail"))
+        self.assertIn("26.0 weeks", report)
+
+    def test_loaded_mission_clears_on_mission_type_change(self) -> None:
+        """Changing mission type must not silently retain incompatible map geometry."""
+        built = main.build_mission_and_prefill("ISR", json.dumps(RECTANGLE_GEOMETRY))
+        cleared, message = main.clear_incompatible_mission_context(
+            "Route / Transit",
+            built[0],
+        )
+        self.assertEqual(cleared, {})
+        self.assertIn("cleared", message)
+        result = main.run_from_ui(
+            "REMUS 300 - 4.5 kWh",
+            "Route / Transit",
+            10,
+            3,
+            3,
+            10,
+            0,
+            0,
+            200,
+            True,
+            3.5,
+            1,
+            True,
+            1,
+            "",
+            0.5,
+            90,
+            25,
+            built[0],
+        )
+        self.assertTrue(str(result[0]).startswith("Input error:"))
+        self.assertIn("loaded map mission is ISR", str(result[0]))
+
+    def test_manual_isr_line_geometry_and_input_validation(self) -> None:
+        """Manual ISR lines should run and invalid numeric entries should be rejected."""
+        result = main.run_from_ui(
+            platform_name="REMUS 300 - 4.5 kWh",
+            mission_type="ISR",
+            manual_area_km2=10,
+            width_km=3,
+            height_km=3,
+            route_distance_km=10,
+            route_heading_deg=0,
+            additional_transit_km=0,
+            track_spacing_m=200,
+            return_to_start=True,
+            speed_kts=3.5,
+            battery_sets_available=1,
+            recharge_allowed=True,
+            mission_sequences=1,
+            rng_seed="12345",
+            current_mean_kts=0.5,
+            current_direction_deg=90,
+            temp_mean_c=25,
+            context={},
+            isr_geometry_type="Line patrol",
+            isr_patrol_distance_km=12,
+            isr_patrol_heading_deg=45,
+        )
+        self.assertIn("Simulation complete", str(result[0]))
+        self.assertEqual(result[10]["isr_patrol_geometry"], "line")
+
+        invalid = main.run_from_ui(
+            platform_name="REMUS 300 - 4.5 kWh",
+            mission_type="Route / Transit",
+            manual_area_km2=10,
+            width_km=3,
+            height_km=3,
+            route_distance_km=-1,
+            route_heading_deg=400,
+            additional_transit_km=-2,
+            track_spacing_m=200,
+            return_to_start=True,
+            speed_kts=0,
+            battery_sets_available=1.5,
+            recharge_allowed=True,
+            mission_sequences=1,
+            rng_seed="",
+            current_mean_kts=-0.5,
+            current_direction_deg=500,
+            temp_mean_c=25,
+            context={},
+        )
+        self.assertTrue(str(invalid[0]).startswith("Input error:"))
+        self.assertIn("Route distance must be greater than zero", str(invalid[0]))
+        self.assertEqual(invalid[1]["interactive"], False)
+
+    def test_downloaded_mission_package_can_be_reloaded_and_deleted(self) -> None:
+        """A session package should restore inputs and delete only its own files."""
+        result = main.run_from_ui(
+            "REMUS 300 - 4.5 kWh",
+            "Route / Transit",
+            10,
+            3,
+            3,
+            12,
+            45,
+            2,
+            200,
+            True,
+            3.5,
+            2,
+            True,
+            1,
+            "12345",
+            0.5,
+            90,
+            25,
+            {},
+        )
+        state = result[10]
+        package_path = Path(str(state["_package_path"]))
+        artifact_dir = Path(str(state["_artifact_dir"]))
+        loaded = main.load_saved_mission_for_ui(str(package_path))
+        self.assertEqual(loaded[0]["mission_type"], "Route / Transit")
+        self.assertIn("Saved mission loaded", str(loaded[1]))
+        self.assertEqual(float(loaded[9]), 12.0)
+        cleared_state, _, _, status = main.delete_session_files(state)
+        self.assertEqual(cleared_state, {})
+        self.assertEqual(status, "Session files deleted.")
+        self.assertFalse(artifact_dir.exists())
 
     def test_radio_sustainment_projection_uses_operator_values(self) -> None:
         """Radio planning scope should behave the same as the legacy checked value."""

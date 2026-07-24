@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 APP_NAME = "UUV Mission Planning and Energy Simulator"
-APP_VERSION = "v4-beta"
-ENERGY_MODEL_VERSION = "energy_model_v4_beta"
+APP_VERSION = "v1"
+ENERGY_MODEL_VERSION = "energy_model_v1"
 VEHICLE_CATALOG_VERSION = "vehicle_catalog_v4_public_baseline"
-USER_AGENT = "uuv-capstone-gradio/0.3 (planning-scale research tool)"
+USER_AGENT = "uuv-mission-planner/1.0 (planning-scale research tool)"
 REQUEST_TIMEOUT = 25
 MONTE_CARLO_RUNS = 100
 EARTH_RADIUS_KM = 6371.0088

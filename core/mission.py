@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from core.geometry import parse_geometry_json
@@ -184,6 +185,8 @@ def aggregate_environments(
         },
         salinity_source=salinity_source,
         source="Open-Meteo area-centroid average",
+        requested_at_utc=next((env.requested_at_utc for env in environments if env.requested_at_utc), ""),
+        valid_at_utc=next((env.valid_at_utc for env in environments if env.valid_at_utc), ""),
     )
 
 
@@ -191,6 +194,7 @@ def build_mission_context(
     mission_type: str,
     geometry_json_text: str,
     metoc_service: MetocFusionService,
+    when_utc: datetime | None = None,
 ) -> MissionBuildResult:
     """Parse geometry, validate compatibility, and load fused METOC data."""
     try:
@@ -204,7 +208,10 @@ def build_mission_context(
     errors: list[str] = []
     for lookup_lat, lookup_lon in lookup_points:
         try:
-            environments.append(metoc_service.fetch(lookup_lat, lookup_lon))
+            if when_utc is None:
+                environments.append(metoc_service.fetch(lookup_lat, lookup_lon))
+            else:
+                environments.append(metoc_service.fetch(lookup_lat, lookup_lon, when_utc))
         except Exception as exc:
             errors.append(f"{lookup_lat:.5f},{lookup_lon:.5f}: {exc}")
     if len(lookup_points) > 1:

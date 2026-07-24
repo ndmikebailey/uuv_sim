@@ -28,3 +28,7 @@ Thumbs.db
 local_matplotlib/
 local_validation/
 model Interface beta/
+model Interface beta*.zip
+
+# Local thesis/document deliverables
+deliverables/

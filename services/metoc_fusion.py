@@ -75,8 +75,12 @@ class MetocFusionService:
 
     def fetch(self, lat: float, lon: float, when_utc: datetime | None = None) -> EnvironmentData:
         """Return fused environment values for a mission centroid."""
-        marine = self.marine_client.fetch(lat, lon)
-        weather = self.weather_client.fetch(lat, lon)
+        if when_utc is None:
+            marine = self.marine_client.fetch(lat, lon)
+            weather = self.weather_client.fetch(lat, lon)
+        else:
+            marine = self.marine_client.fetch(lat, lon, when_utc)
+            weather = self.weather_client.fetch(lat, lon, when_utc)
         environment = marine.merged(weather)
         if not self.salinity_enabled:
             return environment

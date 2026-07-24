@@ -1,6 +1,6 @@
 # Source Register
 
-Configuration-control register for assumptions used by the v4 beta UUV mission planning tool.
+Configuration-control register for assumptions used by the v1 UUV mission planning tool.
 
 | Item | Status | Source / Basis | Notes |
 | --- | --- | --- | --- |
@@ -16,6 +16,6 @@ Configuration-control register for assumptions used by the v4 beta UUV mission p
 | NOAA CO-OPS salinity provider | Active station API path | Public NOAA CO-OPS API via `services/noaa_coops_salinity.py` | Active first priority when a nearby station has salinity data. |
 | NOAA WOA23 salinity provider | Active climatology fallback | Public NOAA WOA23 salinity climatology via `services/woa23_salinity.py` | Used when CO-OPS does not return station salinity. Climatological/historical, not live tactical METOC. |
 | Standard seawater salinity fallback | Active planning assumption | 35.0 PSU, 1025.0 kg/m3 in `services/metoc_fusion.py` | Used when station/grid data are unavailable; no salinity uplift applied. |
-| Copernicus salinity/density provider | Removed from active chain | Development evaluation only | Copernicus was evaluated during development and removed from the active v3.5 salinity chain. |
+| Copernicus salinity/density provider | Removed from active chain | Development evaluation only | Copernicus was evaluated during development and is not part of the v1 salinity chain. |
 | HYCOM/GOFS, SMAP, and Argo salinity | Future enhancement / V&V only | Public ocean model, satellite, and float products | Not active live providers in this release. |
 | Fuel-equivalent sustainment lens | Model assumption | `core/sustainment.py` 10.0 kWh/gal JP-8/diesel tactical-generator planning factor | Secondary planning estimate from generator input energy; not a generator certification curve. |

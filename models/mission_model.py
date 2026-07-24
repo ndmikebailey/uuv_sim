@@ -142,23 +142,35 @@ class MissionAreaSet:
 
     @property
     def width_km(self) -> float:
-        """Return aggregate square width used by current combined search planner."""
-        return self.total_area_km2 ** 0.5 if self.total_area_km2 > 0 else 0.0
+        """Return the east-west span across all preserved search areas."""
+        vertices = [vertex for area in self.areas for vertex in area.vertices]
+        if not vertices:
+            return 0.0
+        from core.geometry import haversine_km
+
+        mean_lat = sum(vertex.lat for vertex in vertices) / len(vertices)
+        return haversine_km(
+            mean_lat,
+            min(vertex.lon for vertex in vertices),
+            mean_lat,
+            max(vertex.lon for vertex in vertices),
+        )
 
     @property
     def height_km(self) -> float:
-        """Return aggregate square height used by current combined search planner."""
-        return self.width_km
+        """Return the north-south span across all preserved search areas."""
+        vertices = [vertex for area in self.areas for vertex in area.vertices]
+        if not vertices:
+            return 0.0
+        from core.geometry import haversine_km
 
-    def aggregate_area(self) -> MissionArea:
-        """Return a single equivalent area for existing search-energy logic."""
-        from core.geometry import manual_rectangle_area
-
-        side_km = max(self.total_area_km2, 0.1) ** 0.5
-        area = manual_rectangle_area(side_km, side_km, self.total_area_km2)
-        area.centroid_lat = self.centroid_lat
-        area.centroid_lon = self.centroid_lon
-        return area
+        mean_lon = sum(vertex.lon for vertex in vertices) / len(vertices)
+        return haversine_km(
+            min(vertex.lat for vertex in vertices),
+            mean_lon,
+            max(vertex.lat for vertex in vertices),
+            mean_lon,
+        )
 
     def to_dict(self) -> dict[str, object]:
         """Serialize the area set into Gradio-state friendly data."""

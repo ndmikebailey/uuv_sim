@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import html
+import io
 import math
 from typing import Any
 from uuid import uuid4
@@ -34,13 +37,14 @@ from app.ui.reporting import (
 )
 from core.energy import run_energy_simulation
 from core.geometry import manual_payload_route, manual_rectangle_area
-from core.mission import build_mission_context
+from core.mission import build_mission_context, validate_mission_geometry
 from models.environment_model import EnvironmentData
 from models.mission_model import MissionArea, MissionAreaSet
 from models.vehicle_model import VEHICLE_CATALOG
 from services.marine_api import OpenMeteoMarineClient
 from services.metoc_fusion import MetocFusionService, standard_seawater_environment
-from services.run_logger import write_run_record
+from services.open_meteo_time import as_utc_datetime, isoformat_utc
+from services.artifacts import cleanup_run_artifacts, create_run_artifacts, load_mission_record
 from services.weather_api import OpenMeteoWeatherClient
 from utils.constants import APP_NAME, APP_VERSION, ISR_MISSIONS, MISSION_TYPES, PAYLOAD_MISSIONS, REGION_PRESETS, SEARCH_MISSIONS
 from utils.parsing import parse_rng_seed, safe_float, safe_int
@@ -371,7 +375,7 @@ function() {
 """
 
 BUILD_MISSION_JS = """
-(missionType, geometryText) => {
+(missionType, geometryText, environmentTime) => {
   let text = geometryText || "";
   if (!text.trim()) {
     try {
@@ -386,7 +390,7 @@ BUILD_MISSION_JS = """
     }
   }
   if (window.uuvRequestLayoutRefresh) window.uuvRequestLayoutRefresh();
-  return [missionType, text];
+  return [missionType, text, environmentTime];
 }
 """
 
@@ -411,7 +415,7 @@ def _with_render_token(html_value: str, namespace: str) -> str:
     return f"<div class='uuv-render-cycle' data-uuv-render-token='{token}'>{html_value}</div>"
 
 
-def clear_results_before_run() -> tuple[Any, ...]:
+def clear_results_before_run(existing_state: dict[str, Any] | None = None) -> tuple[Any, ...]:
     """Clear dynamic report outputs before mounting a fresh simulation result."""
     return (
         "Preparing a fresh results render...",
@@ -424,7 +428,7 @@ def clear_results_before_run() -> tuple[Any, ...]:
         gr.update(value=None),
         gr.update(value=None, visible=False),
         gr.update(value="", visible=False),
-        {},
+        existing_state or {},
         _with_render_token("<div class='uuv-card'>Running mission simulation...</div>", "results-cleared"),
         "",
         "",
@@ -443,6 +447,17 @@ def mission_builder_visibility(mission_type: str) -> tuple[Any, Any]:
         gr.update(visible=mission_type in ISR_MISSIONS or mission_type in SEARCH_MISSIONS),
         gr.update(visible=mission_type in PAYLOAD_MISSIONS),
     )
+
+
+def _mission_family(mission_type: str) -> str:
+    """Return the common family for current and legacy mission labels."""
+    if mission_type in ISR_MISSIONS:
+        return "isr"
+    if mission_type in SEARCH_MISSIONS:
+        return "search"
+    if mission_type in PAYLOAD_MISSIONS:
+        return "route"
+    return ""
 
 
 def _mission_sequence_visibility(mission_type: str) -> Any:
@@ -485,6 +500,35 @@ def mission_input_visibility(mission_type: str) -> tuple[Any, Any, Any, Any]:
         gr.update(visible=mission_type in ISR_MISSIONS),
         _mission_sequence_visibility(mission_type),
     )
+
+
+def clear_incompatible_mission_context(
+    mission_type: str,
+    context: dict[str, Any] | None,
+) -> tuple[dict[str, Any], str]:
+    """Clear a loaded map mission when the user selects another mission type."""
+    active_context = context or {}
+    loaded_type = str(active_context.get("mission_type") or "")
+    if loaded_type and _mission_family(loaded_type) != _mission_family(str(mission_type)):
+        return (
+            {},
+            (
+                f"Loaded {loaded_type} mission cleared because Mission type changed to "
+                f"{mission_type}. Enter manual inputs or build a new map mission."
+            ),
+        )
+    return active_context, context_markdown(active_context)
+
+
+def clear_loaded_mission() -> tuple[dict[str, Any], str]:
+    """Clear the current map mission and return to manual simulator inputs."""
+    return {}, "Loaded mission cleared. The simulator will use manual inputs."
+
+
+def isr_geometry_visibility(geometry_type: str) -> tuple[Any, Any]:
+    """Show the manual ISR controls that apply to the selected geometry."""
+    is_line = str(geometry_type) == "Line patrol"
+    return gr.update(visible=not is_line), gr.update(visible=is_line)
 
 
 def sustainment_projection_visibility(enabled: object) -> Any:
@@ -577,9 +621,37 @@ def _report_map_overlay_update(
     return gr.update(value=_with_render_token(overlay, "report-map"), visible=True)
 
 
-def build_mission_and_prefill(mission_type: str, geometry_json_text: str) -> tuple[Any, ...]:
+def build_mission_and_prefill(
+    mission_type: str,
+    geometry_json_text: str,
+    environment_time_utc: object | None = None,
+) -> tuple[Any, ...]:
     """Build a mission context and prefill simulator inputs."""
-    result = build_mission_context(mission_type, geometry_json_text, METOC_SERVICE)
+    try:
+        requested_time = as_utc_datetime(environment_time_utc)
+    except ValueError as exc:
+        empty_rows = [("Mission build failed", str(exc), "")]
+        return (
+            {},
+            f"Mission build failed: {exc}",
+            rows_to_dataframe(empty_rows, ("Environmental / Geometry Item", "Value", "Unit")),
+            _with_render_token(env_table_to_html(empty_rows, "Mission Build Status"), "mission-env"),
+            geometry_json_text,
+            mission_type,
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(visible=mission_type in SEARCH_MISSIONS),
+            gr.update(visible=mission_type in PAYLOAD_MISSIONS),
+            gr.update(visible=mission_type in ISR_MISSIONS),
+            _mission_sequence_visibility(mission_type),
+        )
+    result = build_mission_context(mission_type, geometry_json_text, METOC_SERVICE, requested_time)
     df = rows_to_dataframe(result.environment_rows, ("Environmental / Geometry Item", "Value", "Unit"))
     html = _with_render_token(
         env_table_to_html(result.environment_rows, "Mission Geometry and Environmental Data" if result.ok else "Mission Build Status"),
@@ -612,6 +684,7 @@ def build_mission_and_prefill(mission_type: str, geometry_json_text: str) -> tup
     environment = context.environment
     context_dict = context.to_dict()
     context_dict["source_geometry_json"] = geometry_json_text
+    context_dict["requested_environment_time_utc"] = isoformat_utc(requested_time)
     area_km2 = getattr(area, "total_area_km2", area.area_km2)
     width_km = getattr(area, "width_km", None)
     height_km = getattr(area, "height_km", None)
@@ -637,6 +710,140 @@ def build_mission_and_prefill(mission_type: str, geometry_json_text: str) -> tup
     )
 
 
+def load_saved_mission_for_ui(file_path: str | None) -> tuple[Any, ...]:
+    """Load a downloaded mission record and restore its simulator inputs."""
+    try:
+        record = load_mission_record(str(file_path or ""))
+        mission_type = str(record.get("mission_type") or "")
+        if mission_type not in ISR_MISSIONS | SEARCH_MISSIONS | PAYLOAD_MISSIONS:
+            raise ValueError("The saved mission contains an unsupported mission type.")
+        area_payload = record.get("mission_area")
+        environment_payload = record.get("environment")
+        simulation_inputs = record.get("simulation_inputs")
+        vehicle_payload = record.get("vehicle_config")
+        if not isinstance(area_payload, dict) or not isinstance(environment_payload, dict):
+            raise ValueError("The saved mission contains invalid geometry or environment data.")
+        if not isinstance(simulation_inputs, dict) or not isinstance(vehicle_payload, dict):
+            raise ValueError("The saved mission contains invalid simulation inputs.")
+
+        if area_payload.get("geometry_type") == "MultiArea":
+            area: MissionArea | MissionAreaSet = MissionAreaSet.from_dict(area_payload)
+        else:
+            area = MissionArea.from_dict(area_payload)
+        validate_mission_geometry(mission_type, area)
+        environment_fields = EnvironmentData.__dataclass_fields__
+        environment = EnvironmentData(
+            **{
+                key: value
+                for key, value in environment_payload.items()
+                if key in environment_fields
+            }
+        )
+        context = {
+            "mission_type": mission_type,
+            "area": area.to_dict(),
+            "environment": environment.to_dict(),
+            **area.to_dict(),
+            **environment.to_dict(),
+        }
+        source_geometry_json = record.get("geometry_json")
+        if source_geometry_json:
+            context["source_geometry_json"] = str(source_geometry_json)
+
+        area_value = getattr(area, "total_area_km2", area.area_km2) or 10.0
+        width_value = getattr(area, "width_km", None) or 3.0
+        height_value = getattr(area, "height_km", None) or 3.0
+        route_distance = getattr(area, "route_distance_km", None) or 10.0
+        route_heading = getattr(area, "route_heading_deg", None) or 0.0
+        platform_name = str(vehicle_payload.get("name") or "REMUS 300 - 4.5 kWh")
+        if platform_name not in VEHICLE_CATALOG:
+            platform_name = "REMUS 300 - 4.5 kWh"
+        speed_value = simulation_inputs.get(
+            "speed_kts",
+            VEHICLE_CATALOG[platform_name].nominal_speed_kts,
+        )
+        seed_value = simulation_inputs.get("rng_seed_requested")
+        planning_scope = (
+            MULTI_MISSION_PLANNING_SCOPE
+            if simulation_inputs.get("sustainment_projection_enabled")
+            else SINGLE_MISSION_SCOPE
+        )
+        simulation_mode = str(
+            simulation_inputs.get("simulation_mode") or MONTE_CARLO_MODE
+        )
+        isr_geometry = (
+            "Line patrol"
+            if mission_type in ISR_MISSIONS and area.geometry_type == "line"
+            else "Rectangle patrol"
+        )
+        rows = environment.table_rows(area.centroid_lat, area.centroid_lon)
+        if isinstance(area, MissionAreaSet):
+            rows.extend(
+                [
+                    ("Search areas", len(area.areas), "areas"),
+                    ("Total search area", area.total_area_km2, "sq km"),
+                ]
+            )
+        status = (
+            "Saved mission loaded. Review the restored inputs in "
+            "2. Single-UUV Simulator before running the estimate."
+        )
+        return (
+            context,
+            status,
+            rows_to_dataframe(rows, ("Environmental / Geometry Item", "Value", "Unit")),
+            _with_render_token(
+                env_table_to_html(rows, "Loaded Mission Geometry and Environmental Data"),
+                "mission-env",
+            ),
+            mission_type,
+            mission_type,
+            area_value,
+            width_value,
+            height_value,
+            route_distance,
+            route_heading,
+            simulation_inputs.get("additional_transit_km", 0.0),
+            simulation_inputs.get("track_spacing_m", 200.0),
+            bool(simulation_inputs.get("return_to_start", True)),
+            environment.current_speed_kts_mean if environment.current_speed_kts_mean is not None else 0.5,
+            environment.current_direction_deg_mean if environment.current_direction_deg_mean is not None else 0.0,
+            environment.sea_surface_temp_c_mean if environment.sea_surface_temp_c_mean is not None else 25.0,
+            platform_name,
+            speed_value,
+            simulation_inputs.get("battery_sets_available", 1),
+            bool(simulation_inputs.get("recharge_allowed", True)),
+            gr.update(
+                value=simulation_inputs.get("mission_sequences", 1),
+                visible=mission_type not in ISR_MISSIONS,
+            ),
+            "" if seed_value is None else str(seed_value),
+            str(simulation_inputs.get("battery_condition", "medium")).title(),
+            simulation_inputs.get("operations_per_week", 1.0),
+            simulation_inputs.get("planning_duration", "1 week"),
+            simulation_inputs.get("generator_efficiency", 0.84),
+            simulation_inputs.get("payload_weight_kg", 0.0),
+            planning_scope,
+            simulation_mode,
+            simulation_inputs.get("monte_carlo_runs_requested", DEFAULT_MONTE_CARLO_RUNS),
+            gr.update(visible=mission_type in SEARCH_MISSIONS),
+            gr.update(visible=mission_type in PAYLOAD_MISSIONS),
+            gr.update(visible=mission_type in ISR_MISSIONS),
+            isr_geometry,
+            route_distance,
+            route_heading,
+        )
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        empty_rows = [("Mission load failed", str(exc), "")]
+        return (
+            {},
+            f"Mission load failed: {exc}",
+            rows_to_dataframe(empty_rows, ("Environmental / Geometry Item", "Value", "Unit")),
+            _with_render_token(env_table_to_html(empty_rows, "Mission Load Status"), "mission-env"),
+            *[gr.update() for _ in range(33)],
+        )
+
+
 def _area_environment_from_state(
     mission_type: str,
     manual_area_km2: float,
@@ -648,10 +855,12 @@ def _area_environment_from_state(
     current_direction_deg: float,
     temp_mean_c: float,
     context: dict[str, Any],
+    isr_geometry_type: str = "Rectangle patrol",
+    isr_patrol_distance_km: float = 10.0,
+    isr_patrol_heading_deg: float = 0.0,
 ) -> tuple[str, MissionArea | MissionAreaSet, EnvironmentData]:
     """Rebuild structured area/environment values from Gradio state."""
     if context:
-        mission_type = str(context.get("mission_type") or mission_type)
         area_payload = context.get("area", {})
         env_payload = context.get("environment", {})
         if isinstance(area_payload, dict) and area_payload.get("geometry_type") == "MultiArea":
@@ -678,18 +887,15 @@ def _area_environment_from_state(
             manual_area,
         )
     elif mission_type in ISR_MISSIONS:
-        manual_area = safe_float(manual_area_km2, 10.0) or 10.0
-        width = safe_float(width_km, 0.0) or 0.0
-        height = safe_float(height_km, 0.0) or 0.0
-        if width <= 0 or height <= 0:
-            side_km = math.sqrt(max(manual_area, 0.1))
-            width = side_km
-            height = side_km
-        area = manual_rectangle_area(
-            width,
-            height,
-            manual_area,
-        )
+        if str(isr_geometry_type) == "Line patrol":
+            area = manual_payload_route(
+                safe_float(isr_patrol_distance_km, 10.0) or 10.0,
+                safe_float(isr_patrol_heading_deg, 0.0) or 0.0,
+            )
+        else:
+            width = safe_float(width_km, 3.0) or 3.0
+            height = safe_float(height_km, 3.0) or 3.0
+            area = manual_rectangle_area(width, height, width * height)
     else:
         area = manual_payload_route(
             safe_float(route_distance_km, 10.0) or 10.0,
@@ -698,12 +904,141 @@ def _area_environment_from_state(
     return mission_type, area, environment
 
 
+def _finite_number(value: object) -> float | None:
+    """Return a finite float or ``None``."""
+    parsed = safe_float(value)
+    if parsed is None or not math.isfinite(parsed):
+        return None
+    return parsed
+
+
+def validate_run_inputs(
+    *,
+    platform_name: str,
+    mission_type: str,
+    manual_area_km2: object,
+    route_distance_km: object,
+    route_heading_deg: object,
+    additional_transit_km: object,
+    track_spacing_m: object,
+    speed_kts: object,
+    battery_sets_available: object,
+    mission_sequences: object,
+    current_mean_kts: object,
+    current_direction_deg: object,
+    temp_mean_c: object,
+    context: dict[str, Any] | None,
+    operations_per_week: object,
+    generator_efficiency: object,
+    payload_weight_kg: object,
+    projection_enabled: bool,
+    simulation_mode: str,
+    monte_carlo_runs: object,
+    isr_geometry_type: str,
+    width_km: object,
+    height_km: object,
+    isr_patrol_distance_km: object,
+    isr_patrol_heading_deg: object,
+) -> list[str]:
+    """Return user-correctable validation errors without silently clamping inputs."""
+    errors: list[str] = []
+
+    def positive(label: str, value: object) -> float | None:
+        parsed = _finite_number(value)
+        if parsed is None or parsed <= 0:
+            errors.append(f"{label} must be greater than zero.")
+            return None
+        return parsed
+
+    def nonnegative(label: str, value: object) -> float | None:
+        parsed = _finite_number(value)
+        if parsed is None or parsed < 0:
+            errors.append(f"{label} must be zero or greater.")
+            return None
+        return parsed
+
+    def direction(label: str, value: object) -> None:
+        parsed = _finite_number(value)
+        if parsed is None or not 0 <= parsed <= 360:
+            errors.append(f"{label} must be between 0 and 360 degrees.")
+
+    if platform_name not in VEHICLE_CATALOG:
+        errors.append("Select a listed UUV platform.")
+    if mission_type not in ISR_MISSIONS | SEARCH_MISSIONS | PAYLOAD_MISSIONS:
+        errors.append("Select a listed mission type.")
+
+    active_context = context or {}
+    loaded_type = str(active_context.get("mission_type") or "")
+    if loaded_type and _mission_family(loaded_type) != _mission_family(mission_type):
+        errors.append(
+            f"The loaded map mission is {loaded_type}; clear it or rebuild it as {mission_type}."
+        )
+
+    positive("Vehicle speed through water", speed_kts)
+    nonnegative("Additional transit distance", additional_transit_km)
+    nonnegative("Current speed mean", current_mean_kts)
+    direction("Current direction mean", current_direction_deg)
+    if _finite_number(temp_mean_c) is None:
+        errors.append("Sea surface temperature must be a number.")
+
+    battery_sets = _finite_number(battery_sets_available)
+    if battery_sets is None or battery_sets < 1 or not battery_sets.is_integer():
+        errors.append("Battery sets on hand must be a whole number of at least 1.")
+    sequences = _finite_number(mission_sequences)
+    if mission_type not in ISR_MISSIONS and (
+        sequences is None or sequences < 1 or not sequences.is_integer()
+    ):
+        errors.append("Mission sequences must be a whole number of at least 1.")
+
+    if not active_context:
+        if mission_type in SEARCH_MISSIONS:
+            positive("Mission search area", manual_area_km2)
+            positive("Swath lane width / track spacing", track_spacing_m)
+        elif mission_type in PAYLOAD_MISSIONS:
+            positive("Route distance", route_distance_km)
+            direction("Route heading", route_heading_deg)
+        elif mission_type in ISR_MISSIONS:
+            if str(isr_geometry_type) == "Line patrol":
+                positive("ISR patrol distance", isr_patrol_distance_km)
+                direction("ISR patrol heading", isr_patrol_heading_deg)
+            elif str(isr_geometry_type) == "Rectangle patrol":
+                positive("ISR patrol width", width_km)
+                positive("ISR patrol height", height_km)
+            else:
+                errors.append("Select Rectangle patrol or Line patrol for manual ISR geometry.")
+    elif mission_type in SEARCH_MISSIONS:
+        positive("Swath lane width / track spacing", track_spacing_m)
+
+    nonnegative("Carried equipment weight", payload_weight_kg)
+    if projection_enabled:
+        positive("Operations per week", operations_per_week)
+        efficiency = _finite_number(generator_efficiency)
+        if efficiency is None or not 0 < efficiency <= 1:
+            errors.append("Generator efficiency must be greater than zero and no greater than 1.")
+
+    if simulation_mode not in {MONTE_CARLO_MODE, DETERMINISTIC_MODE}:
+        errors.append("Select a listed simulation mode.")
+    elif simulation_mode == MONTE_CARLO_MODE:
+        runs = _finite_number(monte_carlo_runs)
+        if (
+            runs is None
+            or not runs.is_integer()
+            or not MIN_MONTE_CARLO_RUNS <= runs <= MAX_MONTE_CARLO_RUNS
+        ):
+            errors.append(
+                f"Number of Monte Carlo runs must be a whole number from "
+                f"{MIN_MONTE_CARLO_RUNS} through {MAX_MONTE_CARLO_RUNS}."
+            )
+    return errors
+
+
 def _planning_weeks(value: object) -> float:
     """Convert compact planning-duration UI text to weeks."""
     mapping = {
         "1 week": 1.0,
         "1 month": 4.0,
         "3 months": 13.0,
+        "6 months": 26.0,
     }
     return mapping.get(str(value), safe_float(value, 4.0) or 4.0)
 
@@ -726,6 +1061,107 @@ def _apply_salinity_policy(
     standard.salinity_error = None
     standard.salinity_query_params = {"source": "Standard seawater assumption", "note": "manual/no-GPS mission; live salinity providers not called"}
     return standard
+
+
+def _run_error_outputs(message: str) -> tuple[Any, ...]:
+    """Return a stable empty result payload for a user-correctable input error."""
+    return (
+        message,
+        DEFAULT_RESULTS_BUTTON_UPDATE,
+        gr.update(),
+        gr.update(),
+        gr.update(),
+        gr.update(),
+        gr.update(),
+        gr.update(),
+        gr.update(),
+        gr.update(value=None, visible=False),
+        gr.update(),
+        gr.update(),
+        gr.update(value=None),
+        gr.update(value=None),
+        gr.update(),
+        gr.update(),
+        gr.update(),
+    )
+
+
+def _figure_data_uri(figure: Any) -> str:
+    """Return a PNG data URI for a Matplotlib figure."""
+    buffer = io.BytesIO()
+    figure.savefig(buffer, format="png", dpi=150, bbox_inches="tight")
+    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def build_downloadable_report_html(
+    *,
+    status: str,
+    mission_type: str,
+    results_html: str,
+    metoc_results_html: str,
+    energy_html: str,
+    battery_html: str,
+    geometry_html: str,
+    environment_html: str,
+    equivalence_html: str,
+    figures: list[tuple[str, Any]],
+) -> str:
+    """Build a standalone HTML mission report with embedded graphics."""
+    figure_html = "".join(
+        (
+            f"<section><h2>{html.escape(title)}</h2>"
+            f"<img src='{_figure_data_uri(figure)}' alt='{html.escape(title)}'></section>"
+        )
+        for title, figure in figures
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UUV Mission Report</title>
+  <style>
+    body {{ max-width: 1100px; margin: 32px auto; padding: 0 24px; color: #172033; font: 15px/1.5 Arial, sans-serif; }}
+    h1, h2, h3 {{ color: #0b2748; }}
+    section {{ margin: 28px 0; break-inside: avoid; }}
+    img {{ display: block; width: 100%; height: auto; border: 1px solid #cbd5e1; }}
+    table {{ width: 100%; border-collapse: collapse; margin: 12px 0; }}
+    th, td {{ border: 1px solid #cbd5e1; padding: 7px 9px; text-align: left; vertical-align: top; }}
+    .run-status {{ padding: 12px 14px; background: #eef6ff; border-left: 5px solid #1d4ed8; }}
+    .small-muted, .helper-note, .detail-note {{ color: #475569; }}
+    @media print {{ body {{ margin: 0; max-width: none; }} }}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>UUV Mission Planning and Energy Simulator</h1>
+    <p><strong>Mission report | Release {html.escape(APP_VERSION)} | {html.escape(mission_type)}</strong></p>
+    <p class="run-status">{html.escape(status)}</p>
+  </header>
+  <section>{results_html}</section>
+  <section>{metoc_results_html}</section>
+  {figure_html}
+  <section>{energy_html}</section>
+  <section>{battery_html}</section>
+  <section>{geometry_html}</section>
+  <section>{environment_html}</section>
+  <section>{equivalence_html}</section>
+</body>
+</html>
+"""
+
+
+def delete_session_files(
+    state: dict[str, Any] | None,
+) -> tuple[dict[str, Any], Any, Any, str]:
+    """Delete the current session's downloadable files."""
+    cleanup_run_artifacts(state)
+    return (
+        {},
+        gr.update(value=None, visible=False, interactive=False),
+        gr.update(value=None, visible=False, interactive=False),
+        "Session files deleted.",
+    )
 
 
 def run_from_ui(
@@ -756,29 +1192,47 @@ def run_from_ui(
     sustainment_projection_enabled: object = False,
     simulation_mode: str = MONTE_CARLO_MODE,
     monte_carlo_runs: int = DEFAULT_MONTE_CARLO_RUNS,
+    isr_geometry_type: str = "Rectangle patrol",
+    isr_patrol_distance_km: float = 10.0,
+    isr_patrol_heading_deg: float = 0.0,
+    previous_results_state: dict[str, Any] | None = None,
 ) -> tuple[Any, ...]:
     """Run the simulation and return all Gradio result outputs."""
+    projection_enabled = _sustainment_projection_enabled(sustainment_projection_enabled)
+    input_errors = validate_run_inputs(
+        platform_name=platform_name,
+        mission_type=mission_type,
+        manual_area_km2=manual_area_km2,
+        route_distance_km=route_distance_km,
+        route_heading_deg=route_heading_deg,
+        additional_transit_km=additional_transit_km,
+        track_spacing_m=track_spacing_m,
+        speed_kts=speed_kts,
+        battery_sets_available=battery_sets_available,
+        mission_sequences=mission_sequences,
+        current_mean_kts=current_mean_kts,
+        current_direction_deg=current_direction_deg,
+        temp_mean_c=temp_mean_c,
+        context=context,
+        operations_per_week=operations_per_week,
+        generator_efficiency=generator_efficiency,
+        payload_weight_kg=payload_weight_kg,
+        projection_enabled=projection_enabled,
+        simulation_mode=simulation_mode,
+        monte_carlo_runs=monte_carlo_runs,
+        isr_geometry_type=isr_geometry_type,
+        width_km=width_km,
+        height_km=height_km,
+        isr_patrol_distance_km=isr_patrol_distance_km,
+        isr_patrol_heading_deg=isr_patrol_heading_deg,
+    )
+    if input_errors:
+        return _run_error_outputs("Input error: " + " ".join(input_errors))
     deterministic_run, effective_monte_carlo_runs = resolve_simulation_mode(simulation_mode, monte_carlo_runs)
     try:
         parsed_seed = None if deterministic_run else parse_rng_seed(rng_seed)
     except ValueError as exc:
-        return (
-            f"Invalid seed: {exc}",
-            DEFAULT_RESULTS_BUTTON_UPDATE,
-            gr.update(),
-            gr.update(),
-            gr.update(),
-            gr.update(),
-            gr.update(),
-            gr.update(),
-            gr.update(),
-            gr.update(value=None, visible=False),
-            gr.update(),
-            gr.update(),
-            gr.update(value=None),
-            gr.update(value=None),
-            gr.update(),
-        )
+        return _run_error_outputs(f"Invalid seed: {exc}")
     mission_type, area, environment = _area_environment_from_state(
         mission_type,
         manual_area_km2,
@@ -790,17 +1244,19 @@ def run_from_ui(
         current_direction_deg,
         temp_mean_c,
         context,
+        isr_geometry_type,
+        isr_patrol_distance_km,
+        isr_patrol_heading_deg,
     )
     environment = _apply_salinity_policy(environment, bool(context))
     vehicle = VEHICLE_CATALOG[platform_name]
     effective_mission_sequences = 1 if mission_type in ISR_MISSIONS else max(1, safe_int(mission_sequences, 1))
-    projection_enabled = _sustainment_projection_enabled(sustainment_projection_enabled)
     effective_operations_per_week = safe_float(operations_per_week, 1.0) or 1.0
     effective_planning_duration = str(planning_duration or "1 week")
     if not projection_enabled:
         effective_operations_per_week = 1.0
         effective_planning_duration = "1 week"
-    simulation_area = area.aggregate_area() if isinstance(area, MissionAreaSet) and mission_type in SEARCH_MISSIONS else area
+    simulation_area = area
     effective_seed = 0 if deterministic_run else parsed_seed
     result = run_energy_simulation(
         vehicle=vehicle,
@@ -829,6 +1285,9 @@ def run_from_ui(
     summary["simulation_mode"] = DETERMINISTIC_MODE if deterministic_run else MONTE_CARLO_MODE
     summary["deterministic_run"] = deterministic_run
     summary["monte_carlo_runs_requested"] = effective_monte_carlo_runs
+    summary["run_record_traceability_status"] = (
+        "Session-scoped download; deleted on request or session expiry."
+    )
     if isinstance(area, MissionAreaSet) and mission_type in SEARCH_MISSIONS:
         summary.update(
             {
@@ -1013,7 +1472,26 @@ def run_from_ui(
     primary_visual_update = gr.update(value=fig_snapshot, visible=True)
     overlay_update = _report_map_overlay_update(context, mission_type, environment)
     source_geometry_json = context.get("source_geometry_json") if context else None
-    _json_record_path, _csv_record_path = write_run_record(
+    results_card_html = build_energy_planner_summary_html(summary, area, environment, vehicle)
+    metoc_results_html = metoc_html(environment, METOC_SERVICE)
+    report_html = build_downloadable_report_html(
+        status=status,
+        mission_type=mission_type,
+        results_html=results_card_html,
+        metoc_results_html=metoc_results_html,
+        energy_html=energy_summary_html,
+        battery_html=battery_sustainment_html,
+        geometry_html=mission_geometry_html,
+        environment_html=environmental_inputs_html,
+        equivalence_html=energy_equivalence_html,
+        figures=[
+            ("Engineering Snapshot", fig_snapshot),
+            ("Mission Energy Distribution", fig_dist),
+            ("Energy and Mission Time", fig_time),
+        ],
+    )
+    cleanup_run_artifacts(previous_results_state)
+    artifact_state = create_run_artifacts(
         mission_type=mission_type,
         area=simulation_area,
         vehicle=vehicle,
@@ -1022,7 +1500,9 @@ def run_from_ui(
         simulation_summary=summary,
         result_rows=result.result_rows,
         source_geometry_json=str(source_geometry_json) if source_geometry_json else None,
+        report_html=report_html,
     )
+    result_state = {**summary, **artifact_state}
     return (
         status,
         ACTIVE_RESULTS_BUTTON_UPDATE,
@@ -1034,11 +1514,21 @@ def run_from_ui(
         fig_dist,
         primary_visual_update,
         overlay_update,
-        summary,
-        _with_render_token(build_energy_planner_summary_html(summary, area, environment, vehicle), "results-card"),
+        result_state,
+        _with_render_token(results_card_html, "results-card"),
         _with_render_token(energy_equivalence_html, "energy-equivalence"),
-        _with_render_token(metoc_html(environment, METOC_SERVICE), "metoc-results"),
+        _with_render_token(metoc_results_html, "metoc-results"),
         _with_render_token(engineering_snapshot_caption, "engineering-caption"),
+        gr.update(
+            value=artifact_state["_report_path"],
+            visible=True,
+            interactive=True,
+        ),
+        gr.update(
+            value=artifact_state["_package_path"],
+            visible=True,
+            interactive=True,
+        ),
     )
 
 
@@ -1061,7 +1551,11 @@ def create_demo() -> gr.Blocks:
 
     with gr.Blocks(title=APP_NAME) as demo:
         mission_context_state = gr.State({})
-        sim_results_state = gr.State({})
+        sim_results_state = gr.State(
+            {},
+            time_to_live=3600,
+            delete_callback=cleanup_run_artifacts,
+        )
 
         gr.Markdown(
             """
@@ -1079,12 +1573,26 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                         gr.Markdown("### Mission Setup")
                         mission_type_builder = gr.Dropdown(MISSION_TYPES, value="ISR", label="Mission type")
                         region_select = gr.Dropdown(list(REGION_PRESETS.keys()), value="Guam", label="Operating region")
+                        environment_time_utc = gr.DateTime(
+                            value=None,
+                            include_time=True,
+                            type="datetime",
+                            timezone="UTC",
+                            label="Environment time (UTC), optional",
+                            info="Leave blank for current conditions.",
+                        )
                         refresh_map_btn = gr.Button("Refresh Map Region")
                         search_note = gr.Markdown("Draw a **line, rectangle, or polygon** for ISR; draw a **rectangle or polygon** for Area Search / MCM.", visible=True)
                         payload_note = gr.Markdown("Draw a **line** for Route / Transit planning.", visible=False)
                         geometry_json = gr.Textbox(label="Map geometry", lines=1, visible=False, elem_id="geometry_json_box")
                         build_fetch_btn = gr.Button("Build Mission and Load Environment", variant="primary")
                         build_go_sim_btn = gr.Button("Go to UUV Simulator")
+                        saved_mission_file = gr.File(
+                            label="Saved mission package",
+                            file_types=[".json", ".zip"],
+                            type="filepath",
+                        )
+                        load_saved_mission_btn = gr.Button("Load Saved Mission")
                         mission_status = gr.Textbox(label="Mission Builder Status", lines=3, interactive=False)
                     with gr.Column(scale=2):
                         map_html = gr.HTML(value=build_leaflet_iframe("Guam"), label="Mission Map")
@@ -1094,6 +1602,7 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
 
             with gr.Tab("2. Single-UUV Simulator", id="simulator"):
                 mission_loaded_md = gr.Markdown("No mission context loaded. You can still run the simulator with manual inputs.")
+                clear_mission_btn = gr.Button("Clear Loaded Mission", size="sm")
                 gr.Markdown("### UUV Profile")
                 with gr.Row():
                     with gr.Column(scale=1):
@@ -1108,13 +1617,26 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                 search_group = gr.Group(visible=False)
                 with search_group:
                     manual_area_km2 = gr.Number(label="Mission search area, sq km", value=10)
-                    width_km = gr.Number(label="Search area width, km", value=3, visible=False)
-                    height_km = gr.Number(label="Search area height, km", value=3, visible=False)
                     track_spacing_m = gr.Number(label="Swath lane width / track spacing, meters", value=200)
                     gr.Markdown("The app calculates lanes, track length, turn burden, and recommended orientation in the background.")
                 isr_group = gr.Group(visible=True)
                 with isr_group:
-                    gr.Markdown("ISR uses the loaded patrol route or perimeter and reports maximum endurance-based time on station.")
+                    gr.Markdown("Use a loaded patrol route or define a manual line or rectangular patrol.")
+                    isr_geometry_type = gr.Radio(
+                        ["Rectangle patrol", "Line patrol"],
+                        value="Rectangle patrol",
+                        label="Manual ISR geometry",
+                    )
+                    isr_rectangle_group = gr.Group(visible=True)
+                    with isr_rectangle_group:
+                        with gr.Row():
+                            width_km = gr.Number(label="ISR patrol width, km", value=3)
+                            height_km = gr.Number(label="ISR patrol height, km", value=3)
+                    isr_line_group = gr.Group(visible=False)
+                    with isr_line_group:
+                        with gr.Row():
+                            isr_patrol_distance_km = gr.Number(label="ISR patrol distance, km", value=10)
+                            isr_patrol_heading_deg = gr.Number(label="ISR patrol heading, deg", value=0)
                 payload_group = gr.Group(visible=False)
                 with payload_group:
                     route_distance_km = gr.Number(label="Route distance, km", value=10)
@@ -1142,7 +1664,11 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                     gr.Markdown("### Sustainment Projection")
                     with gr.Row():
                         operations_per_week = gr.Number(label="Operations per week", value=1)
-                        planning_duration = gr.Dropdown(["1 week", "1 month", "3 months"], value="1 week", label="Planning duration")
+                        planning_duration = gr.Dropdown(
+                            ["1 week", "1 month", "3 months", "6 months"],
+                            value="1 week",
+                            label="Planning duration",
+                        )
                         generator_efficiency = gr.Number(label="Generator efficiency", value=0.84)
 
                 gr.Markdown("### Environment")
@@ -1174,6 +1700,23 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
             with gr.Tab("3. Results", id="results"):
                 gr.HTML("<div id='results-anchor'></div>")
                 results_card = gr.HTML("<div class='uuv-card'>Run a mission simulation to populate results.</div>")
+                with gr.Row():
+                    download_report_button = gr.DownloadButton(
+                        "Download Mission Report",
+                        visible=False,
+                        interactive=False,
+                    )
+                    download_package_button = gr.DownloadButton(
+                        "Download Mission Package",
+                        visible=False,
+                        interactive=False,
+                    )
+                    delete_session_files_button = gr.Button("Delete Session Files")
+                export_status = gr.Textbox(
+                    label="Session File Status",
+                    interactive=False,
+                    visible=True,
+                )
                 metoc_results_card = gr.HTML("")
                 with gr.Row(elem_classes=["report-visual-grid"]):
                     with gr.Column(scale=1, min_width=360, elem_classes=["report-visual-card"]):
@@ -1200,12 +1743,27 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
         refresh_map_btn.click(refresh_map, inputs=[region_select], outputs=[map_html])
         mission_type_builder.change(mission_builder_visibility, inputs=[mission_type_builder], outputs=[search_note, payload_note])
         mission_type_sim.change(mission_input_visibility, inputs=[mission_type_sim], outputs=[search_group, payload_group, isr_group, mission_sequences])
+        mission_type_sim.input(
+            clear_incompatible_mission_context,
+            inputs=[mission_type_sim, mission_context_state],
+            outputs=[mission_context_state, mission_loaded_md],
+        )
+        clear_mission_btn.click(
+            clear_loaded_mission,
+            inputs=None,
+            outputs=[mission_context_state, mission_loaded_md],
+        )
+        isr_geometry_type.change(
+            isr_geometry_visibility,
+            inputs=[isr_geometry_type],
+            outputs=[isr_rectangle_group, isr_line_group],
+        )
         sustainment_projection_enabled.change(sustainment_projection_visibility, inputs=[sustainment_projection_enabled], outputs=[sustainment_projection_group])
         simulation_mode.change(simulation_mode_visibility, inputs=[simulation_mode], outputs=[monte_carlo_runs_input, rng_seed])
         platform_select.change(platform_defaults, inputs=[platform_select], outputs=[speed_kts, platform_info])
         build_fetch_btn.click(
             build_mission_and_prefill,
-            inputs=[mission_type_builder, geometry_json],
+            inputs=[mission_type_builder, geometry_json, environment_time_utc],
             js=BUILD_MISSION_JS,
             outputs=[
                 mission_context_state,
@@ -1232,6 +1790,53 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
             lambda: select_workflow_tab("simulator"),
             inputs=None,
             outputs=[workflow_tabs],
+        )
+        load_saved_mission_btn.click(
+            load_saved_mission_for_ui,
+            inputs=[saved_mission_file],
+            outputs=[
+                mission_context_state,
+                mission_status,
+                env_table,
+                mission_env_html,
+                mission_type_builder,
+                mission_type_sim,
+                manual_area_km2,
+                width_km,
+                height_km,
+                route_distance_km,
+                route_heading_deg,
+                additional_transit_km,
+                track_spacing_m,
+                return_to_start,
+                current_mean,
+                current_dir,
+                temp_mean,
+                platform_select,
+                speed_kts,
+                battery_sets_available,
+                recharge_allowed,
+                mission_sequences,
+                rng_seed,
+                battery_condition,
+                operations_per_week,
+                planning_duration,
+                generator_efficiency,
+                payload_weight,
+                sustainment_projection_enabled,
+                simulation_mode,
+                monte_carlo_runs_input,
+                search_group,
+                payload_group,
+                isr_group,
+                isr_geometry_type,
+                isr_patrol_distance_km,
+                isr_patrol_heading_deg,
+            ],
+        ).then(
+            context_markdown,
+            inputs=[mission_context_state],
+            outputs=[mission_loaded_md],
         )
         run_inputs = [
             platform_select,
@@ -1261,6 +1866,10 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
             sustainment_projection_enabled,
             simulation_mode,
             monte_carlo_runs_input,
+            isr_geometry_type,
+            isr_patrol_distance_km,
+            isr_patrol_heading_deg,
+            sim_results_state,
         ]
         run_outputs = [
             run_status,
@@ -1278,11 +1887,13 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
             energy_equivalence_table,
             metoc_results_card,
             engineering_snapshot_caption_html,
+            download_report_button,
+            download_package_button,
         ]
         run_btn.click(
             clear_results_before_run,
-            inputs=None,
-            outputs=run_outputs,
+            inputs=[sim_results_state],
+            outputs=run_outputs[:15],
             queue=False,
         ).then(
             run_from_ui,
@@ -1295,7 +1906,17 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
             inputs=None,
             outputs=[workflow_tabs],
         )
-        demo.queue(default_concurrency_limit=1)
+        delete_session_files_button.click(
+            delete_session_files,
+            inputs=[sim_results_state],
+            outputs=[
+                sim_results_state,
+                download_report_button,
+                download_package_button,
+                export_status,
+            ],
+        )
+        demo.queue(default_concurrency_limit=4)
     return demo
 
 demo = create_demo()

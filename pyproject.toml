@@ -1,6 +1,6 @@
 [project]
 name = "uuv-mission-planning-simulator"
-version = "3.5.0b0"
+version = "1.0.0"
 description = "Research UUV mission planning and energy simulation tool"
 requires-python = ">=3.10"
 dependencies = [

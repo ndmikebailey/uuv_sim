@@ -1,4 +1,4 @@
-"""Model reasonableness checks for v3.5 beta validation work."""
+"""Model reasonableness checks for the v1 release."""
 
 from __future__ import annotations
 

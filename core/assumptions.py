@@ -28,7 +28,7 @@ MODEL_ASSUMPTIONS: dict[str, ModelAssumption] = {
         key="default_hotel_load_fraction",
         value=0.40,
         rationale="Separates fixed hotel/sensor/control load from speed-dependent propulsion load.",
-        source="Engineering planning assumption for v4 beta speed-aware power correction.",
+        source="Engineering planning assumption for v1 speed-aware power correction.",
         confidence="low-medium",
     ),
     "mission_sensor_mode_power_ranges": ModelAssumption(
@@ -42,7 +42,7 @@ MODEL_ASSUMPTIONS: dict[str, ModelAssumption] = {
         key="default_usable_battery_fraction",
         value=0.88,
         rationale="Legacy catalog value retained for compatibility; current simulations sample battery condition separately from operator reserve margin.",
-        source="Public baseline catalog planning assumption retained in v4 beta.",
+        source="Public baseline catalog planning assumption retained in v1.",
         confidence="medium",
     ),
     "usable_battery_fraction_range": ModelAssumption(

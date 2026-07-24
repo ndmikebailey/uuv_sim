@@ -13,7 +13,7 @@ from typing import Any
 from uuid import uuid4
 
 from models.environment_model import EnvironmentData
-from models.mission_model import MissionArea
+from models.mission_model import MissionArea, MissionAreaSet
 from models.vehicle_model import VehicleState
 from utils.constants import APP_VERSION, ENERGY_MODEL_VERSION, VEHICLE_CATALOG_VERSION
 
@@ -76,6 +76,8 @@ ENERGY_PLANNER_CSV_FIELDS = [
     "recharge_or_swap_required",
     "metoc_lookup_lat",
     "metoc_lookup_lon",
+    "environment_requested_at_utc",
+    "environment_valid_at_utc",
     "current_speed_kts",
     "current_direction_deg",
     "sea_surface_temp_c",
@@ -149,9 +151,12 @@ def _metoc_lookup_point(environment: EnvironmentData) -> tuple[Any, Any]:
     return "", ""
 
 
-def _payload_total_distance_km(area: MissionArea, simulation_inputs: dict[str, Any]) -> float | str:
+def _payload_total_distance_km(
+    area: MissionArea | MissionAreaSet,
+    simulation_inputs: dict[str, Any],
+) -> float | str:
     """Return total payload route distance including return leg and added transit."""
-    route_distance = area.route_distance_km
+    route_distance = getattr(area, "route_distance_km", None)
     if route_distance is None:
         return ""
     return_to_start = bool(simulation_inputs.get("return_to_start"))
@@ -185,8 +190,8 @@ def build_energy_planner_csv_row(
     """
     mission_type = str(mission_context.get("mission_type") or summary.get("mission_type") or "")
     area = mission_context.get("area")
-    if not isinstance(area, MissionArea):
-        raise TypeError("mission_context['area'] must be a MissionArea")
+    if not isinstance(area, (MissionArea, MissionAreaSet)):
+        raise TypeError("mission_context['area'] must be a MissionArea or MissionAreaSet")
     simulation_inputs = mission_context.get("simulation_inputs")
     if not isinstance(simulation_inputs, dict):
         simulation_inputs = {}
@@ -270,6 +275,8 @@ def build_energy_planner_csv_row(
             "recharge_or_swap_required": _yes_no(recharge_required),
             "metoc_lookup_lat": _blank_if_none(metoc_lat),
             "metoc_lookup_lon": _blank_if_none(metoc_lon),
+            "environment_requested_at_utc": environment.requested_at_utc,
+            "environment_valid_at_utc": environment.valid_at_utc,
             "current_speed_kts": _number(environment.current_speed_kts_mean),
             "current_direction_deg": _number(environment.current_direction_deg_mean),
             "sea_surface_temp_c": _number(environment.sea_surface_temp_c_mean),
@@ -303,7 +310,7 @@ def build_energy_planner_csv_row(
                 "payload_weight_multiplier": _number(summary.get("payload_weight_multiplier")),
                 "payload_weight_penalty_basis": summary.get("payload_weight_penalty_basis", ""),
                 "launch_recovery_energy_kwh": _number(summary.get("launch_recovery_energy_kwh")),
-                "route_distance_km": _number(area.route_distance_km or summary.get("route_distance_km")),
+                "route_distance_km": _number(getattr(area, "route_distance_km", None) or summary.get("route_distance_km")),
                 "total_distance_km": _number(summary.get("payload_total_modeled_distance_km") or _payload_total_distance_km(area, simulation_inputs)),
             }
         )
@@ -329,14 +336,14 @@ def build_energy_planner_csv_row(
 
 def write_run_record(
     mission_type: str,
-    area: MissionArea,
+    area: MissionArea | MissionAreaSet,
     vehicle: VehicleState,
     environment: EnvironmentData,
     simulation_inputs: dict[str, Any],
     simulation_summary: dict[str, Any],
     result_rows: list[tuple[str, object, str]],
+    output_dir: str | Path,
     source_geometry_json: str | None = None,
-    output_dir: str | Path = "runs",
 ) -> tuple[str, str]:
     """Write JSON and CSV run records and return their file paths."""
     run_id = str(uuid4())

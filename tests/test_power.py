@@ -36,7 +36,7 @@ class SpeedAwarePowerModelTests(unittest.TestCase):
         self.assertLessEqual(breakdown.total_power_kw, breakdown.nominal_power_kw * 1.10)
 
     def test_existing_energy_helper_uses_speed_model_with_payload_multiplier(self) -> None:
-        """The v3.5 helper should retain payload propulsion scaling while using the power model."""
+        """The helper should retain payload propulsion scaling while using the power model."""
         vehicle = VEHICLE_CATALOG["REMUS 300 - 4.5 kWh"]
         base = estimate_power_at_speed_kw(vehicle, 3.0)
         burdened = estimate_power_at_speed_kw(vehicle, 3.0, propulsion_multiplier=1.05)

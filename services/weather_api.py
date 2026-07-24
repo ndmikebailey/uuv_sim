@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import requests
 
 from models.environment_model import EnvironmentData
+from services.open_meteo_time import isoformat_utc, select_hourly_record
 from utils.constants import OPEN_METEO_WEATHER_URL, REQUEST_TIMEOUT, USER_AGENT
 
 
@@ -46,34 +48,42 @@ class OpenMeteoWeatherClient:
     timeout: int = REQUEST_TIMEOUT
     user_agent: str = USER_AGENT
 
-    def fetch(self, lat: float, lon: float) -> EnvironmentData:
-        """Fetch current weather and return an ``EnvironmentData`` object."""
+    def fetch(self, lat: float, lon: float, when_utc: datetime | None = None) -> EnvironmentData:
+        """Fetch current or selected-time weather and return structured data."""
+        variables = [
+            "temperature_2m",
+            "relative_humidity_2m",
+            "apparent_temperature",
+            "precipitation",
+            "weather_code",
+            "cloud_cover",
+            "pressure_msl",
+            "surface_pressure",
+            "wind_speed_10m",
+            "wind_direction_10m",
+            "wind_gusts_10m",
+        ]
         params = {
             "latitude": lat,
             "longitude": lon,
-            "current": ",".join(
-                [
-                    "temperature_2m",
-                    "relative_humidity_2m",
-                    "apparent_temperature",
-                    "precipitation",
-                    "weather_code",
-                    "cloud_cover",
-                    "pressure_msl",
-                    "surface_pressure",
-                    "wind_speed_10m",
-                    "wind_direction_10m",
-                    "wind_gusts_10m",
-                ]
-            ),
+            "current": ",".join(variables),
+            "hourly": ",".join(variables),
             "wind_speed_unit": "kn",
             "timeformat": "iso8601",
+            "timezone": "GMT",
         }
+        if when_utc is not None:
+            selected_date = when_utc.date().isoformat()
+            params.update({"start_date": selected_date, "end_date": selected_date})
         try:
             response = requests.get(self.url, params=params, timeout=self.timeout, headers={"User-Agent": self.user_agent})
             response.raise_for_status()
             payload = response.json()
-            current: dict[str, Any] = payload.get("current", {})
+            if when_utc is None:
+                current: dict[str, Any] = payload.get("current", {})
+                valid_at_utc = str(current.get("time") or "")
+            else:
+                current, valid_at_utc = select_hourly_record(payload, when_utc)
             code = current.get("weather_code")
             return EnvironmentData(
                 air_temp_c=current.get("temperature_2m"),
@@ -90,9 +100,12 @@ class OpenMeteoWeatherClient:
                 wind_gusts_kts=current.get("wind_gusts_10m"),
                 raw_weather_api_json=payload,
                 weather_query_params=params,
+                requested_at_utc=isoformat_utc(when_utc),
+                valid_at_utc=valid_at_utc,
             )
         except Exception as exc:
             return EnvironmentData(
                 weather_error=str(exc),
                 weather_query_params=params,
+                requested_at_utc=isoformat_utc(when_utc),
             )

@@ -22,10 +22,10 @@ from core.environment import (
     search_current_duration_multiplier,
 )
 from core.sustainment import compute_sustainment_projection
-from core.geometry import clipped_search_lanes, isr_path_distance_per_loop_km
+from core.geometry import clipped_search_lanes, haversine_km, isr_path_distance_per_loop_km
 from core.power import power_model_breakdown, sample_power_model_breakdown, speed_adjusted_power_kw
 from models.environment_model import EnvironmentData
-from models.mission_model import MissionArea
+from models.mission_model import MissionArea, MissionAreaSet
 from models.vehicle_model import VehicleState
 from utils.constants import (
     ISR_MISSIONS,
@@ -121,6 +121,51 @@ def search_plan(area: MissionArea, track_spacing_m: float, track_heading_deg: fl
         track_distance_km=track_distance,
         turn_distance_km=turn_distance,
         segments=list(lanes["segments"]),  # type: ignore[arg-type]
+    )
+
+
+def multi_area_search_plan(
+    area_set: MissionAreaSet,
+    track_spacing_m: float,
+    track_heading_deg: float,
+) -> SearchPlan:
+    """Build one search plan by preserving and summing each selected area."""
+    plans = [
+        search_plan(area, track_spacing_m, track_heading_deg)
+        for area in area_set.areas
+    ]
+    if not plans:
+        raise ValueError("Multi-area Search/MCM requires at least one search area.")
+    lane_count = sum(plan.lanes for plan in plans)
+    track_distance = sum(plan.track_distance_km for plan in plans)
+    turn_distance = sum(plan.turn_distance_km for plan in plans)
+    return SearchPlan(
+        orientation=plans[0].orientation,
+        track_heading_deg=track_heading_deg,
+        track_length_km=track_distance / max(lane_count, 1),
+        lanes=lane_count,
+        turns=sum(plan.turns for plan in plans),
+        total_distance_km=track_distance + turn_distance,
+        track_distance_km=track_distance,
+        turn_distance_km=turn_distance,
+        segments=[
+            segment
+            for plan in plans
+            for segment in plan.segments
+        ],
+    )
+
+
+def multi_area_transit_distance_km(area_set: MissionAreaSet) -> float:
+    """Return center-to-center transit between consecutively drawn search areas."""
+    return sum(
+        haversine_km(
+            area_set.areas[index].centroid_lat,
+            area_set.areas[index].centroid_lon,
+            area_set.areas[index + 1].centroid_lat,
+            area_set.areas[index + 1].centroid_lon,
+        )
+        for index in range(len(area_set.areas) - 1)
     )
 
 
@@ -410,7 +455,7 @@ def compute_isr_persistence(
     environmental_multiplier: float,
 ) -> ISRPersistenceResult:
     """Compute maximum ISR time on station from route/perimeter length and usable energy."""
-    # TODO(v3.5+): Model contested-delay stochastic hover/loiter interruptions after speed-power validation stabilizes.
+    # Future validation work may add stochastic hover/loiter interruptions.
     endurance_speed_kmh = max(endurance_speed_kts * 1.852, 0.001)
     available_mission_energy_kwh = max(usable_energy_kwh * (1.0 - reserve_fraction), 0.0)
     adjusted_power_draw_kw = max(endurance_power_kw * environmental_multiplier, 0.001)
@@ -459,7 +504,7 @@ def energy_equivalent_rows(kwh: float) -> list[tuple[str, object, str]]:
 def run_energy_simulation(
     vehicle: VehicleState,
     mission_type: str,
-    area: MissionArea,
+    area: MissionArea | MissionAreaSet,
     environment: Optional[EnvironmentData],
     additional_transit_km: float,
     track_spacing_m: float,
@@ -556,11 +601,15 @@ def run_energy_simulation(
     isr_persistence_results: list[ISRPersistenceResult] = []
 
     search_options: list[SearchPlan] = []
+    inter_area_transit_km = 0.0
     if mission_type in SEARCH_MISSIONS:
+        plan_builder = multi_area_search_plan if isinstance(area, MissionAreaSet) else search_plan
         search_options = [
-            search_plan(area, track_spacing_m, 0),
-            search_plan(area, track_spacing_m, 90),
+            plan_builder(area, track_spacing_m, 0),
+            plan_builder(area, track_spacing_m, 90),
         ]
+        if isinstance(area, MissionAreaSet):
+            inter_area_transit_km = multi_area_transit_distance_km(area)
     isr_loop_distance_km = isr_path_distance_per_loop_km(area) if mission_type in ISR_MISSIONS else 0.0
 
     for index in range(n):
@@ -666,7 +715,8 @@ def run_energy_simulation(
                 search_base_duration = option.total_distance_km / max(input_speed_kts * 1.852, 0.1)
                 search_duration = search_base_duration * search_current_duration_multiplier(cur, current_dir, option.track_heading_deg, input_speed_kts)
                 search_duration += option.turns * 0.01
-                transit_duration = additional_transit_km / max(input_speed_kts * 1.852, 0.1)
+                total_transit_km = additional_transit_km + inter_area_transit_km
+                transit_duration = total_transit_km / max(input_speed_kts * 1.852, 0.1)
                 duration_candidate = search_duration + transit_duration
                 requested_power_kw = sampled_power.total_power_kw
                 energy_candidate = (
@@ -757,8 +807,9 @@ def run_energy_simulation(
         search_summary = {
             "search_track_distance_km": selected_search_plan.track_distance_km,
             "search_turn_distance_km": selected_search_plan.turn_distance_km,
-            "search_total_distance_km": selected_search_plan.total_distance_km + additional_transit_km,
+            "search_total_distance_km": selected_search_plan.total_distance_km + inter_area_transit_km + additional_transit_km,
             "search_active_survey_distance_km": selected_search_plan.total_distance_km,
+            "search_inter_area_transit_distance_km": inter_area_transit_km,
             "search_additional_transit_distance_km": max(float(additional_transit_km or 0.0), 0.0),
             "search_lane_count": selected_search_plan.lanes,
         }
@@ -995,9 +1046,9 @@ def run_energy_simulation(
         "search_area_km2": area.area_km2 if mission_type in SEARCH_MISSIONS else None,
         "search_width_km": area.width_km,
         "search_height_km": area.height_km,
-        "route_distance_km": area.route_distance_km,
+        "route_distance_km": getattr(area, "route_distance_km", None),
         "payload_total_modeled_distance_km": payload_total_modeled_distance_km if mission_type in PAYLOAD_MISSIONS else 0.0,
-        "route_heading_deg": area.route_heading_deg,
+        "route_heading_deg": getattr(area, "route_heading_deg", None),
         "current_uplift_pct": mean_current_uplift_pct,
         "temp_uplift_pct": mean_temp_uplift_pct,
         "salinity_uplift_pct": mean_salinity_uplift_pct,
