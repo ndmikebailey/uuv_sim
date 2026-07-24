@@ -59,6 +59,27 @@ MODEL_ASSUMPTIONS: dict[str, ModelAssumption] = {
         source="Engineering planning assumption in compute_sustainment_projection.",
         confidence="low-medium",
     ),
+    "current_speed_sampling_model": ModelAssumption(
+        key="current_speed_sampling_model",
+        value="bounded normal; sigma = max(0.02 kts, 25% of mean); bounds = mean +/- 2 sigma",
+        rationale="Represents mission-to-mission current-speed variation without claiming a future tide or weather forecast.",
+        source="core.energy.sample_bounded_current_speeds.",
+        confidence="low-medium",
+    ),
+    "current_direction_sampling_policy": ModelAssumption(
+        key="current_direction_sampling_policy",
+        value="fixed at the entered or retrieved direction",
+        rationale="Current speed is stochastic; future direction changes are not modeled.",
+        source="core.energy.run_energy_simulation.",
+        confidence="low",
+    ),
+    "sustainment_projection_resampling": ModelAssumption(
+        key="sustainment_projection_resampling",
+        value="independent mission/day draws from the normalized single-mission Monte Carlo distribution",
+        rationale="Carries modeled mission uncertainty, including bounded current variation, into the selected planning horizon while preserving the planning-recommendation baseline.",
+        source="core.sustainment.compute_sustainment_projection_variance.",
+        confidence="low-medium",
+    ),
     "open_meteo_representative_point_policy": ModelAssumption(
         key="open_meteo_representative_point_policy",
         value="route/transit midpoint; ISR first patrol point; search area centroid",

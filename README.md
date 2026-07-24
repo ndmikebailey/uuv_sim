@@ -75,8 +75,9 @@ The local application normally opens at `http://127.0.0.1:7860`.
 - Review every retained default before using a result.
 - Changing the simulator mission type clears an incompatible loaded map mission.
 - Environmental lookup can use current conditions or a user-selected UTC date and time.
+- Monte Carlo runs resample current speed independently for each mission sequence. The model uses a standard deviation equal to 25% of the entered mean and bounds draws at two standard deviations; current direction remains fixed.
 - Multi-area Search/MCM calculations preserve each area’s lane plan and include center-to-center transit in the order the areas were drawn.
-- Select `Multi-mission planning` to display the sustainment outlook near the top of the report.
+- Select `Multi-mission planning` to display the sustainment outlook and its stochastic P10–P90 horizon-energy range near the top of the report.
 - The model rejects invalid negative, nonfinite, out-of-range, and noninteger inputs where those values are not mathematically valid.
 - The application is a research and planning aid. It is not an operational navigation, tactical approval, safety, or meteorological and oceanographic authority.
 

@@ -21,7 +21,10 @@ from core.environment import (
     salinity_buoyancy_penalty,
     search_current_duration_multiplier,
 )
-from core.sustainment import compute_sustainment_projection
+from core.sustainment import (
+    compute_sustainment_projection,
+    compute_sustainment_projection_variance,
+)
 from core.geometry import clipped_search_lanes, haversine_km, isr_path_distance_per_loop_km
 from core.power import power_model_breakdown, sample_power_model_breakdown, speed_adjusted_power_kw
 from models.environment_model import EnvironmentData
@@ -87,6 +90,32 @@ class SimulationResult:
     transit_sensor_energy_samples_kwh: np.ndarray
     active_sensor_duration_samples_hr: np.ndarray
     total_active_power_samples_kw: np.ndarray
+
+
+def sample_bounded_current_speeds(
+    rng: np.random.Generator,
+    mean_kts: float,
+    sigma_kts: float,
+    size: int | tuple[int, ...],
+    bound_sigma: float = 2.0,
+) -> np.ndarray:
+    """Draw nonnegative current speeds from a bounded normal distribution."""
+    mean = max(float(mean_kts), 0.0)
+    sigma = max(float(sigma_kts), 0.0)
+    bound = max(float(bound_sigma), 0.0)
+    if mean <= 0.0 or sigma <= 0.0 or bound <= 0.0:
+        return np.full(size, mean, dtype=float)
+
+    lower = max(0.0, mean - (bound * sigma))
+    upper = mean + (bound * sigma)
+    samples = rng.normal(mean, sigma, size)
+    outside = (samples < lower) | (samples > upper)
+    attempts = 0
+    while np.any(outside) and attempts < 20:
+        samples[outside] = rng.normal(mean, sigma, int(np.count_nonzero(outside)))
+        outside = (samples < lower) | (samples > upper)
+        attempts += 1
+    return np.clip(samples, lower, upper)
 
 
 def route_leg_time_hr(
@@ -547,11 +576,23 @@ def run_energy_simulation(
     launch_recovery_energy, launch_recovery_overhead_hr, launch_recovery_power_kw = launch_recovery_energy_kwh(vehicle)
     input_speed_kts = max(float(speed_kts or vehicle.nominal_speed_kts), 0.1)
     input_power_breakdown = power_model_breakdown(vehicle, input_speed_kts)
-    current_sigma_kts = 0.0 if current_mean <= 0.0 else max(0.02, 0.25 * current_mean)
-    sampled_current = (
-        np.full(n, max(current_mean, 0.0))
+    current_sigma_kts = (
+        0.0
+        if deterministic_mode or current_mean <= 0.0
+        else max(0.02, 0.25 * current_mean)
+    )
+    current_lower_bound_kts = max(0.0, current_mean - (2.0 * current_sigma_kts))
+    current_upper_bound_kts = max(current_mean, 0.0) + (2.0 * current_sigma_kts)
+    current_events_per_trial = 1 if mission_type in ISR_MISSIONS else mission_sequences
+    sampled_current_events = (
+        np.full((n, current_events_per_trial), max(current_mean, 0.0))
         if deterministic_mode
-        else np.clip(rng.normal(current_mean, current_sigma_kts, n), 0, None)
+        else sample_bounded_current_speeds(
+            rng,
+            current_mean,
+            current_sigma_kts,
+            (n, current_events_per_trial),
+        )
     )
     sampled_temp = np.full(n, temp_mean) if deterministic_mode else rng.normal(temp_mean, 1.5, n)
     sampled_temperature_capacity_factor = np.array([lithium_temperature_capacity_factor(float(temp)) for temp in sampled_temp])
@@ -613,7 +654,8 @@ def run_energy_simulation(
     isr_loop_distance_km = isr_path_distance_per_loop_km(area) if mission_type in ISR_MISSIONS else 0.0
 
     for index in range(n):
-        cur = float(sampled_current[index])
+        current_events = sampled_current_events[index]
+        cur = float(current_events[0])
         temp = float(sampled_temp[index])
         usable_battery_sample = float(sampled_usable_battery_per_set[index])
         sampled_power = (
@@ -647,13 +689,6 @@ def run_energy_simulation(
         if mission_type in PAYLOAD_MISSIONS:
             route_distance = float(area.route_distance_km or 10.0)
             route_heading = float(area.route_heading_deg or 0.0)
-            outbound_time = route_leg_time_hr(route_distance, input_speed_kts, cur, current_dir, route_heading)
-            return_time = 0.0
-            if payload_returns_to_start:
-                return_time = route_leg_time_hr(route_distance, input_speed_kts, cur, current_dir, (route_heading + 180) % 360)
-            transit_time = additional_transit_km / max(input_speed_kts * 1.852, 0.1)
-            duration_single = outbound_time + return_time + transit_time + launch_recovery_overhead_hr
-            current_penalty = payload_current_penalty(cur, current_dir, route_heading, input_speed_kts)
             outbound_power = power_model_breakdown(
                 vehicle,
                 input_speed_kts,
@@ -666,28 +701,74 @@ def run_energy_simulation(
             return_power = sampled_power
             outbound_power_kw = outbound_power.total_power_kw
             return_power_kw = return_power.total_power_kw
-            moving_duration = max(outbound_time + transit_time + return_time, 0.001)
+            total_outbound_time = 0.0
+            total_return_time = 0.0
+            total_transit_time = 0.0
+            energy_single = 0.0
+            duration_single = 0.0
+            for daily_current in current_events:
+                current_value = float(daily_current)
+                outbound_time = route_leg_time_hr(
+                    route_distance,
+                    input_speed_kts,
+                    current_value,
+                    current_dir,
+                    route_heading,
+                )
+                return_time = 0.0
+                if payload_returns_to_start:
+                    return_time = route_leg_time_hr(
+                        route_distance,
+                        input_speed_kts,
+                        current_value,
+                        current_dir,
+                        (route_heading + 180) % 360,
+                    )
+                transit_time = additional_transit_km / max(input_speed_kts * 1.852, 0.1)
+                current_penalty = payload_current_penalty(
+                    current_value,
+                    current_dir,
+                    route_heading,
+                    input_speed_kts,
+                )
+                environmental_multiplier = environmental_uplift_factor(
+                    temp,
+                    current_penalty,
+                    salinity_penalty,
+                )
+                moving_time = outbound_time + transit_time + return_time
+                duration_single += moving_time + launch_recovery_overhead_hr
+                energy_single += (
+                    (
+                        ((outbound_power_kw + mission_sensor_power_kw) * (outbound_time + transit_time))
+                        + ((return_power_kw + mission_sensor_power_kw) * return_time)
+                    )
+                    * environmental_multiplier
+                ) + launch_recovery_energy
+                mission_sensor_energy_kwh += mission_sensor_power_kw * moving_time * environmental_multiplier
+                total_outbound_time += outbound_time
+                total_return_time += return_time
+                total_transit_time += transit_time
+
+            moving_duration = max(total_outbound_time + total_transit_time + total_return_time, 0.001)
             active_power = power_model_breakdown(
                 vehicle,
                 input_speed_kts,
                 hotel_fraction=sampled_power.hotel_fraction,
                 speed_exponent=sampled_power.speed_exponent,
                 propulsion_multiplier=sampled_power.propulsion_multiplier
-                * (((outbound_time + transit_time) * payload_propulsion_multiplier + return_time) / moving_duration),
+                * (
+                    (
+                        (total_outbound_time + total_transit_time) * payload_propulsion_multiplier
+                        + total_return_time
+                    )
+                    / moving_duration
+                ),
                 nominal_power_scale=sampled_power.nominal_power_scale,
                 low_speed_penalty_fraction=sampled_power.low_speed_penalty_fraction,
             )
-            environmental_multiplier = environmental_uplift_factor(temp, current_penalty, salinity_penalty)
             total_active_power_kw = active_power.total_power_kw + mission_sensor_power_kw
-            active_sensor_duration_hr = outbound_time + return_time + transit_time
-            energy_single = (
-                (
-                    ((outbound_power_kw + mission_sensor_power_kw) * (outbound_time + transit_time))
-                    + ((return_power_kw + mission_sensor_power_kw) * return_time)
-                )
-                * environmental_multiplier
-            ) + launch_recovery_energy
-            mission_sensor_energy_kwh = mission_sensor_power_kw * active_sensor_duration_hr * environmental_multiplier
+            active_sensor_duration_hr = moving_duration
             active_sensor_energy_kwh = mission_sensor_energy_kwh
         elif mission_type in ISR_MISSIONS:
             endurance_speed_kts = input_speed_kts
@@ -710,43 +791,71 @@ def run_energy_simulation(
             mission_sensor_energy_kwh = mission_sensor_power_kw * active_sensor_duration_hr * environmental_multiplier
             active_sensor_energy_kwh = mission_sensor_energy_kwh
         else:
-            option_results: list[tuple[float, float, float, float, SearchPlan]] = []
-            for option in search_options:
-                search_base_duration = option.total_distance_km / max(input_speed_kts * 1.852, 0.1)
-                search_duration = search_base_duration * search_current_duration_multiplier(cur, current_dir, option.track_heading_deg, input_speed_kts)
-                search_duration += option.turns * 0.01
-                total_transit_km = additional_transit_km + inter_area_transit_km
-                transit_duration = total_transit_km / max(input_speed_kts * 1.852, 0.1)
-                duration_candidate = search_duration + transit_duration
-                requested_power_kw = sampled_power.total_power_kw
-                energy_candidate = (
-                    ((requested_power_kw + mission_sensor_power_kw) * search_duration)
-                    + ((requested_power_kw + transit_sensor_power_kw) * transit_duration)
-                ) * (1 + salinity_penalty)
-                option_results.append((energy_candidate, duration_candidate, search_duration, transit_duration, option))
+            energy_single = 0.0
+            duration_single = 0.0
+            for daily_current in current_events:
+                option_results: list[tuple[float, float, float, float, SearchPlan]] = []
+                for option in search_options:
+                    search_base_duration = option.total_distance_km / max(input_speed_kts * 1.852, 0.1)
+                    search_duration = search_base_duration * search_current_duration_multiplier(
+                        float(daily_current),
+                        current_dir,
+                        option.track_heading_deg,
+                        input_speed_kts,
+                    )
+                    search_duration += option.turns * 0.01
+                    total_transit_km = additional_transit_km + inter_area_transit_km
+                    transit_duration = total_transit_km / max(input_speed_kts * 1.852, 0.1)
+                    duration_candidate = search_duration + transit_duration
+                    requested_power_kw = sampled_power.total_power_kw
+                    energy_candidate = (
+                        ((requested_power_kw + mission_sensor_power_kw) * search_duration)
+                        + ((requested_power_kw + transit_sensor_power_kw) * transit_duration)
+                    ) * (1 + salinity_penalty)
+                    option_results.append(
+                        (
+                            energy_candidate,
+                            duration_candidate,
+                            search_duration,
+                            transit_duration,
+                            option,
+                        )
+                    )
 
-            best_energy, best_duration, best_search_duration, best_transit_duration, best_option = min(option_results, key=lambda item: item[0])
-            energy_single = best_energy
-            duration_single = best_duration
+                best_energy, best_duration, best_search_duration, best_transit_duration, best_option = min(
+                    option_results,
+                    key=lambda item: item[0],
+                )
+                energy_single += best_energy
+                duration_single += best_duration
+                active_sensor_duration_hr += best_search_duration
+                active_sensor_energy_kwh += (
+                    mission_sensor_power_kw
+                    * best_search_duration
+                    * (1 + salinity_penalty)
+                )
+                transit_sensor_energy_kwh += (
+                    transit_sensor_power_kw
+                    * best_transit_duration
+                    * (1 + salinity_penalty)
+                )
+                recommended_orientations.append(best_option.orientation)
+
             total_active_power_kw = active_power.total_power_kw + mission_sensor_power_kw
-            active_sensor_duration_hr = best_search_duration
-            active_sensor_energy_kwh = mission_sensor_power_kw * best_search_duration * (1 + salinity_penalty)
-            transit_sensor_energy_kwh = transit_sensor_power_kw * best_transit_duration * (1 + salinity_penalty)
             mission_sensor_energy_kwh = active_sensor_energy_kwh + transit_sensor_energy_kwh
-            recommended_orientations.append(best_option.orientation)
 
-        energies.append(energy_single * mission_sequences)
-        durations.append(duration_single * mission_sequences)
+        energies.append(energy_single)
+        durations.append(duration_single)
         power_samples_kw.append(total_active_power_kw)
         hotel_power_samples_kw.append(active_power.hotel_power_kw)
         propulsion_power_samples_kw.append(active_power.propulsion_power_kw)
         low_speed_penalty_samples_kw.append(active_power.low_speed_penalty_kw)
         mission_sensor_power_samples_kw.append(mission_sensor_power_kw)
         transit_sensor_power_samples_kw.append(transit_sensor_power_kw)
-        mission_sensor_energy_samples_kwh.append(mission_sensor_energy_kwh * mission_sequences)
-        active_sensor_energy_samples_kwh.append(active_sensor_energy_kwh * mission_sequences)
-        transit_sensor_energy_samples_kwh.append(transit_sensor_energy_kwh * mission_sequences)
-        active_sensor_duration_samples_hr.append(active_sensor_duration_hr * mission_sequences)
+        mission_sensor_energy_samples_kwh.append(mission_sensor_energy_kwh)
+        active_sensor_energy_samples_kwh.append(active_sensor_energy_kwh)
+        transit_sensor_energy_samples_kwh.append(transit_sensor_energy_kwh)
+        active_sensor_duration_samples_hr.append(active_sensor_duration_hr)
         total_active_power_samples_kw.append(total_active_power_kw)
         speed_exponent_samples.append(active_power.speed_exponent)
         hotel_fraction_samples.append(active_power.hotel_fraction)
@@ -918,6 +1027,13 @@ def run_energy_simulation(
         battery_sets_available=max(1, battery_sets_available),
         generator_efficiency=sustainment_generator_efficiency,
     )
+    sustainment_projection_variance = compute_sustainment_projection_variance(
+        planning_energy_kwh=planning_energy_kwh,
+        total_missions=float(sustainment_projection["total_missions"]),
+        mission_energy_samples_kwh=energy_arr,
+        rng=rng,
+        trials=n,
+    )
     recharge_feasibility = recharge_feasibility_lens(
         p95_energy_kwh=recommended_planning_energy,
         mission_duration_hr=mean_duration,
@@ -1050,6 +1166,22 @@ def run_energy_simulation(
         "payload_total_modeled_distance_km": payload_total_modeled_distance_km if mission_type in PAYLOAD_MISSIONS else 0.0,
         "route_heading_deg": getattr(area, "route_heading_deg", None),
         "current_uplift_pct": mean_current_uplift_pct,
+        "current_sampling_model": (
+            "Fixed baseline current"
+            if deterministic_mode
+            else "Independent bounded-normal current event for each Monte Carlo mission sequence"
+        ),
+        "current_sampling_mean_kts": current_mean,
+        "current_sampling_sigma_kts": current_sigma_kts,
+        "current_sampling_lower_bound_kts": current_lower_bound_kts,
+        "current_sampling_upper_bound_kts": current_upper_bound_kts,
+        "current_sampling_p10_kts": float(np.percentile(sampled_current_events, 10)),
+        "current_sampling_p50_kts": float(np.percentile(sampled_current_events, 50)),
+        "current_sampling_p90_kts": float(np.percentile(sampled_current_events, 90)),
+        "current_sampling_events_per_trial": current_events_per_trial,
+        "current_sampling_direction_basis": (
+            f"Current speed is resampled; direction remains fixed at {current_dir:.1f} deg."
+        ),
         "temp_uplift_pct": mean_temp_uplift_pct,
         "salinity_uplift_pct": mean_salinity_uplift_pct,
         "environmental_multiplier": mean_environmental_multiplier,
@@ -1064,6 +1196,7 @@ def run_energy_simulation(
         "battery_remaining_pct_stress": max(0.0, min(100.0, 100.0 * (1.0 - conservative_stress_energy / max(total_available_kwh, 0.001)))),
         "battery_remaining_pct_p80": max(0.0, min(100.0, 100.0 * (1.0 - p80 / max(total_available_kwh, 0.001)))),
         **{f"sustainment_{key}": value for key, value in sustainment_projection.items()},
+        **{f"sustainment_{key}": value for key, value in sustainment_projection_variance.items()},
         **recharge_feasibility,
         **search_summary,
         **isr_summary,

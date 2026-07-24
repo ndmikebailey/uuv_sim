@@ -173,7 +173,7 @@ class SalinityProviderTests(unittest.TestCase):
                 "in_mission_recharge_shortfall_kwh": 3.0,
             }
         )
-        self.assertIn(("In-mission recharge shortfall", 3.0, "kWh"), rows)
+        self.assertIn(("Energy beyond initial charged inventory", 3.0, "kWh"), rows)
         self.assertIn(("Generator input energy to reset consumed energy", 12.0, "kWh"), rows)
         self.assertNotIn(("Fuel-equivalent estimate", 1.2, "gal JP-8/diesel"), rows)
 

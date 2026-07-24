@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import unittest
 
-from core.sustainment import compute_sustainment_projection
+import numpy as np
+
+from core.sustainment import (
+    compute_sustainment_projection,
+    compute_sustainment_projection_variance,
+)
 
 
 class SustainmentProjectionTests(unittest.TestCase):
@@ -38,6 +43,20 @@ class SustainmentProjectionTests(unittest.TestCase):
         self.assertAlmostEqual(result["generator_input_energy_kwh"], 20.0)
         self.assertAlmostEqual(result["fuel_gallons_equivalent"], 2.0)
         self.assertEqual(result["fuel_type_label"], "JP-8/diesel tactical-generator planning factor")
+
+    def test_horizon_variance_resamples_each_projected_mission(self) -> None:
+        result = compute_sustainment_projection_variance(
+            planning_energy_kwh=5.0,
+            total_missions=182.0,
+            mission_energy_samples_kwh=np.array([4.0, 5.0, 6.0]),
+            rng=np.random.default_rng(12345),
+            trials=2_000,
+        )
+
+        self.assertTrue(result["projection_variance_enabled"])
+        self.assertLess(result["projected_energy_p10_kwh"], 910.0)
+        self.assertGreater(result["projected_energy_p90_kwh"], 910.0)
+        self.assertIn("Independent mission/day resampling", result["projection_variance_basis"])
 
 
 if __name__ == "__main__":

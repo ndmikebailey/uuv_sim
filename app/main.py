@@ -149,6 +149,11 @@ CUSTOM_CSS = """
 .decision-kpi-label { color: var(--uuv-muted); font-size: 12px; font-weight: 700; }
 .decision-kpi-value { font-size: 20px; font-weight: 900; margin-top: 6px; }
 .decision-kpi-note { color: var(--uuv-text); font-size: 12px; margin-top: 4px; }
+.projection-basis {
+  color: var(--uuv-muted);
+  font-size: 12px;
+  margin: 8px 0 0 0 !important;
+}
 .decision-kpi.green .decision-kpi-label, .decision-kpi.green .decision-kpi-note,
 .decision-kpi.green .decision-kpi-value,
 .decision-kpi.red .decision-kpi-label, .decision-kpi.red .decision-kpi-note,
@@ -246,6 +251,23 @@ CUSTOM_CSS = """
   margin-top: -6px;
   padding: 0 4px 8px 4px;
 }
+.report-download-row {
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.report-download-row > * {
+  flex: 0 1 220px !important;
+  min-width: 170px !important;
+}
+.report-export-status {
+  color: var(--uuv-muted);
+  font-size: 12px;
+  min-height: 0;
+  margin: 4px 0 0 auto;
+  text-align: right;
+}
 .traceability-detail { margin: 10px 0; }
 .traceability-detail summary { cursor: pointer; font-weight: 800; padding: 10px 0; }
 .metoc-assessment, .metoc-panel, .metoc-card-grid { width: 100%; max-width: none; }
@@ -289,6 +311,16 @@ CUSTOM_CSS = """
   color: var(--uuv-subtle);
   font-size: 12px;
   margin: -4px 0 10px 0;
+}
+@media (max-width: 1100px) {
+  .primary-decision-kpis { grid-template-columns: repeat(4, minmax(145px, 1fr)); }
+  .sustainment-kpis { grid-template-columns: repeat(3, minmax(145px, 1fr)); }
+}
+@media (max-width: 700px) {
+  .decision-topline { grid-template-columns: 1fr; }
+  .primary-decision-kpis, .sustainment-kpis { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
+  .report-download-row { justify-content: stretch; }
+  .report-download-row > * { flex: 1 1 100% !important; }
 }
 """
 
@@ -1121,18 +1153,45 @@ def build_downloadable_report_html(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>UUV Mission Report</title>
   <style>
-    body {{ max-width: 1100px; margin: 32px auto; padding: 0 24px; color: #172033; font: 15px/1.5 Arial, sans-serif; }}
+    {CUSTOM_CSS}
+    body.report-document {{
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 24px 48px;
+      background: #f1f5f9;
+      color: #172033;
+      font: 15px/1.5 Arial, sans-serif;
+    }}
+    body.report-document > header {{
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      padding: 18px 20px;
+      background: #ffffff;
+    }}
     h1, h2, h3 {{ color: #0b2748; }}
-    section {{ margin: 28px 0; break-inside: avoid; }}
+    section {{ margin: 22px 0; }}
     img {{ display: block; width: 100%; height: auto; border: 1px solid #cbd5e1; }}
     table {{ width: 100%; border-collapse: collapse; margin: 12px 0; }}
     th, td {{ border: 1px solid #cbd5e1; padding: 7px 9px; text-align: left; vertical-align: top; }}
     .run-status {{ padding: 12px 14px; background: #eef6ff; border-left: 5px solid #1d4ed8; }}
     .small-muted, .helper-note, .detail-note {{ color: #475569; }}
-    @media print {{ body {{ margin: 0; max-width: none; }} }}
+    @media print {{
+      :root {{
+        --uuv-panel-bg: #ffffff;
+        --uuv-panel-soft-bg: #f8fafc;
+        --uuv-table-head-bg: #e5edf7;
+        --uuv-border: #cbd5e1;
+        --uuv-border-strong: #94a3b8;
+        --uuv-text: #0f172a;
+        --uuv-heading: #020617;
+        --uuv-muted: #334155;
+      }}
+      body.report-document {{ margin: 0; max-width: none; padding: 0; background: #ffffff; }}
+      body.report-document > header, .uuv-card {{ break-inside: avoid-page; }}
+    }}
   </style>
 </head>
-<body>
+<body class="report-document light">
   <header>
     <h1>UUV Mission Planning and Energy Simulator</h1>
     <p><strong>Mission report | Release {html.escape(APP_VERSION)} | {html.escape(mission_type)}</strong></p>
@@ -1308,7 +1367,16 @@ def run_from_ui(
     inventory_label = "vehicle units" if one_way_inventory else "battery sets"
     recommended_energy = float(summary.get("recommended_planning_energy_kwh", summary.get("planning_energy_kwh", 0)) or 0)
     stress_energy = float(summary.get("conservative_stress_energy_kwh", summary.get("conservative_energy_kwh", 0)) or 0)
-    if one_way_inventory:
+    if mission_type in ISR_MISSIONS and not one_way_inventory:
+        if summary.get("battery_inventory_sufficient_no_recharge"):
+            inventory_sentence = (
+                "Charged battery inventory is sufficient with planned battery swaps; no in-mission recharge is required."
+                if int(summary.get("battery_sets_required_recommended") or 1) > 1
+                else "One charged battery set is sufficient; no swap or in-mission recharge is required."
+            )
+        else:
+            inventory_sentence = "Charged battery inventory is insufficient without in-mission recharge."
+    elif one_way_inventory:
         inventory_sentence = (
             "Vehicle inventory is sufficient without recharge."
             if summary.get("battery_inventory_sufficient_no_recharge")
@@ -1411,7 +1479,7 @@ def run_from_ui(
         battery_sustainment_html += build_detail_section_html(
             build_sustainment_projection_rows(summary),
             "Sustainment Projection Lens",
-            "The sustainment lens is an energy-flow projection for the selected horizon and operations tempo. Fuel-equivalent estimate is based on generator input energy using a conservative 10.0 kWh/gal JP-8/diesel tactical-generator planning factor. This is a sustainment-planning estimate, not a generator certification curve.",
+            "The sustainment lens is an energy-flow projection for the selected horizon and operations tempo. Each projected mission/day independently resamples the core Monte Carlo distribution, including bounded current variation; this represents environmental uncertainty and is not a future tide or weather forecast. Fuel-equivalent estimate is based on generator input energy using a conservative 10.0 kWh/gal JP-8/diesel tactical-generator planning factor. This is a sustainment-planning estimate, not a generator certification curve.",
             build_sustainment_projection_helper(summary),
             render_title=True,
         )
@@ -1676,6 +1744,11 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                     current_mean = gr.Number(label="Current speed mean, kts", value=0.5)
                     current_dir = gr.Number(label="Current direction mean, deg", value=0)
                     temp_mean = gr.Number(label="Sea surface temperature mean, deg C", value=25)
+                gr.Markdown(
+                    "Monte Carlo runs resample current speed for each mission sequence using bounded variation around the entered mean. "
+                    "The standard deviation is 25% of the mean and draws are limited to two standard deviations; for 0.8 kts, the modeled range is 0.4-1.2 kts. "
+                    "Direction remains fixed. This represents daily environmental uncertainty, not a tide or weather forecast."
+                )
 
                 gr.Markdown("### Simulation Mode / Monte Carlo Setup")
                 with gr.Group():
@@ -1700,23 +1773,6 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
             with gr.Tab("3. Results", id="results"):
                 gr.HTML("<div id='results-anchor'></div>")
                 results_card = gr.HTML("<div class='uuv-card'>Run a mission simulation to populate results.</div>")
-                with gr.Row():
-                    download_report_button = gr.DownloadButton(
-                        "Download Mission Report",
-                        visible=False,
-                        interactive=False,
-                    )
-                    download_package_button = gr.DownloadButton(
-                        "Download Mission Package",
-                        visible=False,
-                        interactive=False,
-                    )
-                    delete_session_files_button = gr.Button("Delete Session Files")
-                export_status = gr.Textbox(
-                    label="Session File Status",
-                    interactive=False,
-                    visible=True,
-                )
                 metoc_results_card = gr.HTML("")
                 with gr.Row(elem_classes=["report-visual-grid"]):
                     with gr.Column(scale=1, min_width=360, elem_classes=["report-visual-card"]):
@@ -1739,6 +1795,20 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
                 environmental_inputs_table = gr.HTML("")
                 energy_equivalence_table = gr.HTML("")
                 search_overlay_plot = gr.Plot(label=None, show_label=False, elem_classes=["report-plot"], visible=False)
+                gr.Markdown("### Report Files")
+                with gr.Row(elem_classes=["report-download-row"]):
+                    download_report_button = gr.DownloadButton(
+                        "Download Mission Report",
+                        visible=False,
+                        interactive=False,
+                    )
+                    download_package_button = gr.DownloadButton(
+                        "Download Mission Package",
+                        visible=False,
+                        interactive=False,
+                    )
+                    delete_session_files_button = gr.Button("Delete Session Files")
+                export_status = gr.Markdown("", elem_classes=["report-export-status"])
 
         refresh_map_btn.click(refresh_map, inputs=[region_select], outputs=[map_html])
         mission_type_builder.change(mission_builder_visibility, inputs=[mission_type_builder], outputs=[search_note, payload_note])
@@ -1890,6 +1960,12 @@ Build a mission first, then run a single-UUV energy estimate. The simulator can 
             download_report_button,
             download_package_button,
         ]
+        run_btn.click(
+            lambda: "",
+            inputs=None,
+            outputs=[export_status],
+            queue=False,
+        )
         run_btn.click(
             clear_results_before_run,
             inputs=[sim_results_state],

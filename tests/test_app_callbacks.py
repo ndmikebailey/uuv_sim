@@ -463,13 +463,16 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertNotIn("patrol loop distance is", str(result[11]))
         self.assertIn("Patrol loop distance", str(result[11]))
         self.assertIn("Endurance per set", str(result[11]))
-        self.assertIn("Recovery/swap", str(result[11]))
+        self.assertNotIn("Recovery/swap</div>", str(result[11]))
+        self.assertNotIn("Expected energy</div>", str(result[11]))
         self.assertNotIn("Battery sets P80", str(result[11]))
         self.assertNotIn("Battery sets P95", str(result[11]))
         self.assertIn("sequential recovery/swap", str(result[11]))
         self.assertNotIn("completed patrol loop(s)", str(result[11]))
         self.assertIn("Total patrol distance per installed set", str(result[4]))
         self.assertIn("Total patrol distance using total inventory", str(result[4]))
+        self.assertIn("Battery swap required", str(result[3]))
+        self.assertNotIn("Runtime per battery set", str(result[3]))
         self.assertIn("section-insight-card", str(result[4]))
         self.assertGreater(len(result[7].axes[0].patches), 0)
         self.assertIn("ISR Mission Energy Uncertainty Distribution", result[7].axes[0].get_title())
@@ -484,6 +487,26 @@ class AppCallbackSmokeTests(unittest.TestCase):
         html = main.metoc_html(EnvironmentData(), main.METOC_SERVICE)
         self.assertIn("metoc-assessment", html)
         self.assertIn("metoc-card-grid", html)
+
+    def test_downloaded_html_embeds_browser_report_styling(self) -> None:
+        """The standalone report should retain the in-app card and grid layout."""
+        report = main.build_downloadable_report_html(
+            status="Simulation complete.",
+            mission_type="ISR",
+            results_html="<div class='uuv-card'><div class='decision-kpi-grid'>Result</div></div>",
+            metoc_results_html="",
+            energy_html="",
+            battery_html="",
+            geometry_html="",
+            environment_html="",
+            equivalence_html="",
+            figures=[],
+        )
+
+        self.assertIn(".decision-kpi-grid { display: grid", report)
+        self.assertIn(".uuv-card {", report)
+        self.assertIn('body class="report-document light"', report)
+        self.assertIn("Result", report)
 
     def test_report_css_declares_light_and_dark_table_contrast(self) -> None:
         """Custom report tables should not inherit unreadable light-theme text."""
@@ -518,6 +541,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertRegex(rows["Gigajoules"], r"0\.014 GJ")
         self.assertRegex(rows["Tonnes of oil equivalent"], r"0\.000327 TOE")
         self.assertRegex(rows["Barrel-of-oil equivalent"], r"0\.002235 BOE")
+        self.assertNotIn("Metric tons oil equivalent", rows)
         fuel_rows = dict(build_energy_equivalence_rows(3.8, "test basis", 0.38))
         self.assertEqual(fuel_rows["Fuel-equivalent estimate based on generator input energy"], "0.38 gal JP-8/diesel")
 
@@ -638,8 +662,17 @@ class AppCallbackSmokeTests(unittest.TestCase):
         self.assertIn("Feasible with continuous recharge/swap support", html)
         self.assertIn("Initial charged inventory is short by 3.2 kWh", html)
         self.assertNotIn("Not feasible under current recharge assumptions", html)
-        rows = {label: value for label, value, _ in build_sustainment_projection_rows({**summary, "sustainment_projection_enabled": True})}
-        self.assertEqual(rows["In-mission recharge shortfall"], 3.2)
+        rows = {
+            label: value
+            for label, value, _ in build_sustainment_projection_rows(
+                {
+                    **summary,
+                    "sustainment_projection_enabled": True,
+                    "sustainment_recharge_energy_required_kwh": 3.2,
+                }
+            )
+        }
+        self.assertEqual(rows["Energy beyond initial charged inventory"], 3.2)
 
     def test_recharge_bottleneck_and_non_rechargeable_cases_are_distinct(self) -> None:
         """Recharge bottlenecks and one-way platforms should not share recharge-supported wording."""
@@ -1238,6 +1271,12 @@ class AppCallbackSmokeTests(unittest.TestCase):
         )
         self.assertEqual(deterministic[10]["simulation_mode"], main.DETERMINISTIC_MODE)
         self.assertEqual(deterministic[10]["monte_carlo_runs"], 1)
+        self.assertEqual(deterministic[10]["current_sampling_sigma_kts"], 0.0)
+        self.assertEqual(
+            deterministic[10]["current_sampling_lower_bound_kts"],
+            deterministic[10]["current_sampling_upper_bound_kts"],
+        )
+        self.assertFalse(deterministic[10]["sustainment_projection_variance_enabled"])
         self.assertNotIn("Invalid seed", str(deterministic[0]))
 
     def test_v1_report_hierarchy_keeps_percentiles_in_traceability(self) -> None:
@@ -1463,7 +1502,12 @@ class AppCallbackSmokeTests(unittest.TestCase):
         report = str(result[11])
         self.assertLess(report.index("Mission Decision Brief"), report.index("Sustainment Outlook"))
         self.assertLess(report.index("Sustainment Outlook"), report.index("Technical Traceability / Model Detail"))
-        self.assertIn("26.0 weeks", report)
+        self.assertIn("26 weeks", report)
+        self.assertIn("Stochastic P10-P90", report)
+        self.assertIn("independently resamples", report)
+        self.assertLess(report.index("Sustainment Outlook"), report.index("Uncertainty allowance"))
+        self.assertIn("Current speed sampling bounds", str(result[5]))
+        self.assertIn("Current direction treatment", str(result[5]))
 
     def test_loaded_mission_clears_on_mission_type_change(self) -> None:
         """Changing mission type must not silently retain incompatible map geometry."""

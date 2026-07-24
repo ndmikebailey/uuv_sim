@@ -171,6 +171,8 @@ class ModelReasonablenessTests(unittest.TestCase):
         self.assertIn("default_usable_battery_fraction", MODEL_ASSUMPTIONS)
         self.assertIn("salinity_buoyancy_penalty_curve", MODEL_ASSUMPTIONS)
         self.assertIn("temperature_derating_curve_v1", MODEL_ASSUMPTIONS)
+        self.assertIn("current_speed_sampling_model", MODEL_ASSUMPTIONS)
+        self.assertIn("sustainment_projection_resampling", MODEL_ASSUMPTIONS)
         self.assertGreater(len(assumptions_as_rows()), 0)
 
     def test_missing_salinity_preserves_current_payload_energy(self) -> None:

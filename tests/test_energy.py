@@ -6,7 +6,12 @@ import unittest
 
 import numpy as np
 
-from core.energy import compute_energy_recommendation_metrics, run_energy_simulation, sample_mission_sensor_power_kw
+from core.energy import (
+    compute_energy_recommendation_metrics,
+    run_energy_simulation,
+    sample_bounded_current_speeds,
+    sample_mission_sensor_power_kw,
+)
 from core.geometry import manual_rectangle_area
 from models.environment_model import EnvironmentData
 from models.vehicle_model import VEHICLE_CATALOG
@@ -60,6 +65,49 @@ class EnergyReproducibilityTests(unittest.TestCase):
             samples = [sample_mission_sensor_power_kw(mission_type, rng) for _ in range(500)]
             self.assertGreaterEqual(min(samples), lower)
             self.assertLessEqual(max(samples), upper)
+
+    def test_current_samples_are_bounded_around_entered_mean(self) -> None:
+        """Current draws should remain inside the configured two-sigma bounds."""
+        samples = sample_bounded_current_speeds(
+            np.random.default_rng(12345),
+            mean_kts=0.8,
+            sigma_kts=0.2,
+            size=10_000,
+        )
+
+        self.assertGreaterEqual(float(np.min(samples)), 0.4)
+        self.assertLessEqual(float(np.max(samples)), 1.2)
+        self.assertAlmostEqual(float(np.mean(samples)), 0.8, delta=0.01)
+
+    def test_repeated_missions_receive_independent_current_events(self) -> None:
+        """Each route/search sequence should receive a separate current draw."""
+        result = run_energy_simulation(
+            vehicle=VEHICLE_CATALOG["REMUS 300 - 4.5 kWh"],
+            mission_type="Route / Transit",
+            area=manual_rectangle_area(3.0, 3.0, 9.0),
+            environment=EnvironmentData(
+                current_speed_kts_mean=0.8,
+                current_direction_deg_mean=90.0,
+                sea_surface_temp_c_mean=25.0,
+            ),
+            additional_transit_km=0.0,
+            track_spacing_m=200.0,
+            return_to_start=True,
+            speed_kts=3.5,
+            battery_sets_available=2,
+            recharge_allowed=True,
+            mission_sequences=3,
+            rng_seed=12345,
+            monte_carlo_runs=100,
+        )
+
+        self.assertEqual(result.summary["current_sampling_events_per_trial"], 3)
+        self.assertEqual(result.summary["current_sampling_lower_bound_kts"], 0.4)
+        self.assertAlmostEqual(float(result.summary["current_sampling_upper_bound_kts"]), 1.2)
+        self.assertGreater(
+            float(result.summary["current_sampling_p90_kts"]),
+            float(result.summary["current_sampling_p10_kts"]),
+        )
 
     def test_seed_replays_energy_samples(self) -> None:
         """The same seed should replay the same Monte Carlo samples."""

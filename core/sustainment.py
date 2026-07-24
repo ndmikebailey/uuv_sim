@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 
 def compute_sustainment_projection(
     planning_energy_kwh: float,
@@ -50,4 +52,79 @@ def compute_sustainment_projection(
         "fuel_gallons_equivalent": fuel_gallons_equivalent,
         "fuel_type_label": "JP-8/diesel tactical-generator planning factor",
         "recharge_energy_required_kwh": recharge_energy,
+    }
+
+
+def compute_sustainment_projection_variance(
+    planning_energy_kwh: float,
+    total_missions: float,
+    mission_energy_samples_kwh: np.ndarray | list[float],
+    rng: np.random.Generator,
+    trials: int,
+) -> dict[str, float | str | bool]:
+    """
+    Resample mission-to-mission energy variation across a planning horizon.
+
+    Each projected mission independently draws from the single-mission Monte
+    Carlo distribution, including its bounded current variation. The samples
+    are normalized to the planning recommendation so the established
+    sustainment baseline remains planning energy multiplied by mission count.
+    """
+    planning_energy = max(float(planning_energy_kwh), 0.0)
+    mission_count = max(float(total_missions), 0.0)
+    samples = np.asarray(mission_energy_samples_kwh, dtype=float)
+    samples = samples[np.isfinite(samples) & (samples >= 0.0)]
+    trial_count = max(1, min(int(trials), 10_000))
+    baseline_total = planning_energy * mission_count
+    if planning_energy <= 0.0 or mission_count <= 0.0 or samples.size == 0:
+        return {
+            "projection_variance_enabled": False,
+            "projection_variance_trials": float(trial_count),
+            "projected_energy_std_kwh": 0.0,
+            "projected_energy_p10_kwh": baseline_total,
+            "projected_energy_p50_kwh": baseline_total,
+            "projected_energy_p90_kwh": baseline_total,
+            "projection_variance_basis": "No stochastic horizon variance was available.",
+        }
+
+    sample_mean = float(np.mean(samples))
+    if samples.size == 1 or sample_mean <= 0.0:
+        projected_totals = np.full(trial_count, baseline_total)
+    else:
+        normalized_samples = samples / sample_mean
+        whole_missions = int(math.floor(mission_count))
+        fractional_mission = mission_count - whole_missions
+        if whole_missions <= 512:
+            normalized_totals = np.zeros(trial_count)
+            for _ in range(whole_missions):
+                normalized_totals += rng.choice(normalized_samples, size=trial_count)
+            if fractional_mission > 0.0:
+                normalized_totals += (
+                    rng.choice(normalized_samples, size=trial_count)
+                    * fractional_mission
+                )
+            projected_totals = planning_energy * normalized_totals
+        else:
+            normalized_std = float(np.std(normalized_samples, ddof=1))
+            projected_totals = rng.normal(
+                loc=baseline_total,
+                scale=planning_energy * normalized_std * math.sqrt(mission_count),
+                size=trial_count,
+            )
+            projected_totals = np.clip(projected_totals, 0.0, None)
+
+    return {
+        "projection_variance_enabled": samples.size > 1,
+        "projection_variance_trials": float(trial_count),
+        "projected_energy_std_kwh": float(np.std(projected_totals, ddof=1))
+        if projected_totals.size > 1
+        else 0.0,
+        "projected_energy_p10_kwh": float(np.percentile(projected_totals, 10)),
+        "projected_energy_p50_kwh": float(np.percentile(projected_totals, 50)),
+        "projected_energy_p90_kwh": float(np.percentile(projected_totals, 90)),
+        "projection_variance_basis": (
+            "Independent mission/day resampling from the single-mission Monte Carlo "
+            "distribution, including bounded current variation and normalized to "
+            "the planning-recommendation baseline."
+        ),
     }
