@@ -28,8 +28,8 @@ class VehicleCatalogTests(unittest.TestCase):
                 self.assertTrue(vehicle.sensor_load_basis)
                 self.assertIn(vehicle.sensor_load_included, (True, False, None))
 
-    def test_old_duplicate_program_names_are_removed(self) -> None:
-        old_names = {
+    def test_old_program_entries_are_not_selectable(self) -> None:
+        removed_entries = {
             "Lionfish (Next-Gen MCM - Standard)",
             "Lionfish (Next-Gen MCM - Extended)",
             "Yellow Moray (Submarine TTL)",
@@ -42,7 +42,7 @@ class VehicleCatalogTests(unittest.TestCase):
             "AN/AQS-23 Barracuda",
             "Next-Gen MUUV (REMUS 620)",
         }
-        self.assertTrue(old_names.isdisjoint(VEHICLE_CATALOG))
+        self.assertTrue(removed_entries.isdisjoint(VEHICLE_CATALOG))
 
     def test_known_sensor_inclusion_cases(self) -> None:
         self.assertFalse(VEHICLE_CATALOG["REMUS 620 - 3 battery / no payload"].sensor_load_included)
