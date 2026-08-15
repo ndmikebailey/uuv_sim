@@ -24,6 +24,7 @@ class VehicleState:
     source_url: Optional[str] = None
     sensor_load_included: Optional[bool] = None
     sensor_load_basis: Optional[str] = None
+    size_class: Optional[str] = None
     dry_weight_kg: Optional[float] = None
     hotel_fraction: Optional[float] = None
     hotel_power_fraction: Optional[float] = None
