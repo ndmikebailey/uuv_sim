@@ -27,6 +27,30 @@ class VehicleCatalogTests(unittest.TestCase):
                 self.assertTrue(vehicle.source_url)
                 self.assertTrue(vehicle.sensor_load_basis)
                 self.assertIn(vehicle.sensor_load_included, (True, False, None))
+                self.assertIn(vehicle.size_class, {"S", "M", "L"})
+
+    def test_size_class_groups(self) -> None:
+        expected_medium = {
+            "REMUS 600 - 5.2 kWh",
+            "REMUS 620 - 3 battery / no payload",
+            "Bluefin-12 - 7.6 kWh",
+        }
+        expected_large = {
+            "REMUS 6000 - 17.55 kWh",
+            "Bluefin-21 - 13.5 kWh",
+            "Sentry - 13 kWh validation profile",
+            "Sentry - 18 kWh validation profile",
+            "Autosub5 - 25 kWh validation profile",
+            "GEOMAR ABYSS - 11.2 kWh",
+        }
+        self.assertEqual(
+            {name for name, vehicle in VEHICLE_CATALOG.items() if vehicle.size_class == "M"},
+            expected_medium,
+        )
+        self.assertEqual(
+            {name for name, vehicle in VEHICLE_CATALOG.items() if vehicle.size_class == "L"},
+            expected_large,
+        )
 
     def test_old_program_entries_are_not_selectable(self) -> None:
         removed_entries = {
