@@ -34,7 +34,7 @@ MODEL_ASSUMPTIONS: dict[str, ModelAssumption] = {
     "mission_sensor_mode_power_ranges": ModelAssumption(
         key="mission_sensor_mode_power_ranges",
         value="Endurance/Transit uniform 0-25 W; ISR/Persistence uniform 50-75 W; Search/MCM uniform 75-150 W",
-        rationale="Represents uncertainty in onboard sensors, processing, navigation support, communications, and mission-equipment demand by active mission segment without replacing hotel or propulsion power.",
+        rationale="Represents uncertainty in onboard sensors, processing, navigation support, communications, and mission-equipment demand when that demand is not already included in the selected catalog endurance baseline.",
         source="AUS reconstruction calibration finding bounded by public UUV endurance specification sheets and mission-configuration evidence.",
         confidence="low-medium",
     ),
