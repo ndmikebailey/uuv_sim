@@ -13,7 +13,8 @@
     "sensor_load_included": null,
     "sensor_load_basis": "Sensor-equipped bathymetric variant; the cited endurance statement does not say whether sensor demand is included.",
     "source_url": "https://hii.com/wp-content/uploads/2022/07/REMUS-100B-3-31-22_web.pdf",
-    "source_note": "HII REMUS 100B bathymetric variant: 1.5 kWh, 8 h estimated endurance, up to 4.5 kt."
+    "source_note": "HII REMUS 100B bathymetric variant: 1.5 kWh, 8 h estimated endurance, up to 4.5 kt.",
+    "size_class": "S"
   },
   "REMUS 130 - 1.5 kWh": {
     "battery_kwh": 1.5,
@@ -29,7 +30,8 @@
     "sensor_load_included": null,
     "sensor_load_basis": "Standard side-scan sonar is listed, but HII does not state whether the 10-h endurance includes the sonar duty cycle.",
     "source_url": "https://www.hii.com/products/remus-130-uuvs",
-    "source_note": "HII REMUS 130: 1.5-kWh family battery basis, up to 10 h, speeds up to 5 kt. Recharge retained as the existing 6-h planning value."
+    "source_note": "HII REMUS 130: 1.5-kWh family battery basis, up to 10 h, speeds up to 5 kt. Recharge retained as the existing 6-h planning value.",
+    "size_class": "S"
   },
   "REMUS 300 - 1.5 kWh": {
     "battery_kwh": 1.5,
@@ -45,7 +47,8 @@
     "sensor_load_included": null,
     "sensor_load_basis": "Published endurance condition does not explicitly identify sensor-load inclusion.",
     "source_url": "https://www.hii.com/news/photo-release-huntington-ingalls-industries-announces-commercial-release-of-remus-300-unmanned-underwater-vehicle",
-    "source_note": "HII REMUS 300 1.5-kWh configuration: up to 10 h at 3 kt."
+    "source_note": "HII REMUS 300 1.5-kWh configuration: up to 10 h at 3 kt.",
+    "size_class": "S"
   },
   "REMUS 300 - 3.0 kWh": {
     "battery_kwh": 3.0,
@@ -61,7 +64,8 @@
     "sensor_load_included": null,
     "sensor_load_basis": "Published endurance condition does not explicitly identify sensor-load inclusion.",
     "source_url": "https://www.hii.com/news/photo-release-huntington-ingalls-industries-announces-commercial-release-of-remus-300-unmanned-underwater-vehicle",
-    "source_note": "HII REMUS 300 3.0-kWh configuration: up to 20 h at 3 kt."
+    "source_note": "HII REMUS 300 3.0-kWh configuration: up to 20 h at 3 kt.",
+    "size_class": "S"
   },
   "REMUS 300 - 4.5 kWh": {
     "battery_kwh": 4.5,
@@ -77,7 +81,8 @@
     "sensor_load_included": null,
     "sensor_load_basis": "Published endurance condition does not explicitly identify sensor-load inclusion.",
     "source_url": "https://www.hii.com/news/photo-release-huntington-ingalls-industries-announces-commercial-release-of-remus-300-unmanned-underwater-vehicle",
-    "source_note": "HII REMUS 300 4.5-kWh configuration: up to 30 h at 3 kt."
+    "source_note": "HII REMUS 300 4.5-kWh configuration: up to 30 h at 3 kt.",
+    "size_class": "S"
   },
   "REMUS 600 - 5.2 kWh": {
     "battery_kwh": 5.2,
@@ -93,7 +98,8 @@
     "sensor_load_included": null,
     "sensor_load_basis": "Public REMUS 600 endurance varies with speed, battery configuration, and sensor use.",
     "source_url": "https://www.hii.com/products/remus-uuvs",
-    "source_note": "Commercial REMUS 600 entry replaces the MK18/Kingfish alias. Standard 5.2-kWh rechargeable configuration with the cited 24-h planning baseline. Recharge is a 4 h/kWh estimate."
+    "source_note": "Commercial REMUS 600 entry replaces the MK18/Kingfish alias. Standard 5.2-kWh rechargeable configuration with the cited 24-h planning baseline. Recharge is a 4 h/kWh estimate.",
+    "size_class": "M"
   },
   "REMUS 620 - 3 battery / no payload": {
     "battery_kwh": 28.9,
@@ -109,7 +115,8 @@
     "sensor_load_included": false,
     "sensor_load_basis": "The cited 110-h configuration is explicitly a no-payload condition.",
     "source_url": "https://www.hii.com/products/remus-620-uuvs",
-    "source_note": "HII REMUS 620 3-battery/no-payload condition: 28.9 kWh, 110 h, 509 km, approximately 2.5-3 kt. Replaces the old mixed 15-kWh/110-h entry."
+    "source_note": "HII REMUS 620 3-battery/no-payload condition: 28.9 kWh, 110 h, 509 km, approximately 2.5-3 kt. Replaces the old mixed 15-kWh/110-h entry.",
+    "size_class": "M"
   },
   "REMUS 6000 - 17.55 kWh": {
     "battery_kwh": 17.55,
@@ -125,7 +132,8 @@
     "sensor_load_included": null,
     "sensor_load_basis": "Standard side-scan sonar is listed, but the 25-h endurance statement does not resolve sensor-load inclusion.",
     "source_url": "https://www.hii.com/products/remus-6000-uuvs",
-    "source_note": "HII REMUS 6000: up to 17.55 kWh, up to 25 h, speeds up to 4.2 kt. Nominal 3 kt used for the planning catalog; recharge is a 4 h/kWh estimate."
+    "source_note": "HII REMUS 6000: up to 17.55 kWh, up to 25 h, speeds up to 4.2 kt. Nominal 3 kt used for the planning catalog; recharge is a 4 h/kWh estimate.",
+    "size_class": "L"
   },
   "Bluefin-9 - 1.9 kWh": {
     "battery_kwh": 1.9,
@@ -141,7 +149,8 @@
     "sensor_load_included": null,
     "sensor_load_basis": "Published endurance condition does not explicitly identify sensor-load inclusion.",
     "source_url": "https://gdmissionsystems.com/en/products/underwater-vehicles/bluefin-9-autonomous-underwater-vehicle",
-    "source_note": "General Dynamics Bluefin-9: 1.9 kWh, 8 h at 3 kt, up to 5 kt. Recharge is a 4 h/kWh estimate."
+    "source_note": "General Dynamics Bluefin-9: 1.9 kWh, 8 h at 3 kt, up to 5 kt. Recharge is a 4 h/kWh estimate.",
+    "size_class": "S"
   },
   "Bluefin-12 - 7.6 kWh": {
     "battery_kwh": 7.6,
@@ -157,7 +166,8 @@
     "sensor_load_included": null,
     "sensor_load_basis": "Speed-dependent endurance is published; sensor-load inclusion is not explicit.",
     "source_url": "https://gdmissionsystems.com/products/underwater-vehicles/bluefin-12-unmanned-underwater-vehicle",
-    "source_note": "General Dynamics Bluefin-12: 7.6 kWh; 24 h at 3 kt selected as the catalog baseline. The 36-h at 2-kt point remains reference data. Recharge is a 4 h/kWh estimate."
+    "source_note": "General Dynamics Bluefin-12: 7.6 kWh; 24 h at 3 kt selected as the catalog baseline. The 36-h at 2-kt point remains reference data. Recharge is a 4 h/kWh estimate.",
+    "size_class": "M"
   },
   "Bluefin-21 - 13.5 kWh": {
     "battery_kwh": 13.5,
@@ -173,7 +183,8 @@
     "sensor_load_included": true,
     "sensor_load_basis": "The 25-h endurance condition is explicitly stated with the standard payload.",
     "source_url": "https://gdmissionsystems.com/products/underwater-vehicles/bluefin-21-autonomous-underwater-vehicle",
-    "source_note": "General Dynamics Bluefin-21: 13.5 kWh, 25 h at 3 kt with standard payload, up to 4.5 kt. Recharge is a 4 h/kWh estimate."
+    "source_note": "General Dynamics Bluefin-21: 13.5 kWh, 25 h at 3 kt with standard payload, up to 4.5 kt. Recharge is a 4 h/kWh estimate.",
+    "size_class": "L"
   },
   "Iver3 580 Standard - 0.8 kWh": {
     "battery_kwh": 0.8,
@@ -189,7 +200,8 @@
     "sensor_load_included": null,
     "sensor_load_basis": "Endurance is explicitly payload/current dependent; exact sensor inclusion is not resolved.",
     "source_url": "https://www.l3harris.com/all-capabilities/iver3-standard-system-auv",
-    "source_note": "L3Harris Iver3 580 Standard: 0.8 kWh, 5-6 h at 2.5 kt, payload/current dependent. The 5-h endpoint is used as the conservative catalog baseline."
+    "source_note": "L3Harris Iver3 580 Standard: 0.8 kWh, 5-6 h at 2.5 kt, payload/current dependent. The 5-h endpoint is used as the conservative catalog baseline.",
+    "size_class": "S"
   },
   "Iver3 EP - 0.8 kWh": {
     "battery_kwh": 0.8,
@@ -205,7 +217,8 @@
     "sensor_load_included": null,
     "sensor_load_basis": "Published endurance is configuration dependent.",
     "source_url": "https://www.l3harris.com/all-capabilities/iver3-ep-open-system-auv",
-    "source_note": "L3Harris Iver3 EP: 0.8 kWh, 8-14 h at 2.5 kt. The 8-h endpoint is used as the conservative catalog baseline."
+    "source_note": "L3Harris Iver3 EP: 0.8 kWh, 8-14 h at 2.5 kt. The 8-h endpoint is used as the conservative catalog baseline.",
+    "size_class": "S"
   },
   "Iver4 580 - 0.78 kWh": {
     "battery_kwh": 0.78,
@@ -221,7 +234,8 @@
     "sensor_load_included": null,
     "sensor_load_basis": "Published endurance condition does not explicitly identify sensor-load inclusion.",
     "source_url": "https://www.l3harris.com/all-capabilities/iver4-580",
-    "source_note": "L3Harris Iver4 580: 0.78 kWh, 6 h, up to 4.5 kt survey and above 5 kt sprint. Recharge is a 4 h/kWh estimate."
+    "source_note": "L3Harris Iver4 580: 0.78 kWh, 6 h, up to 4.5 kt survey and above 5 kt sprint. Recharge is a 4 h/kWh estimate.",
+    "size_class": "S"
   },
   "Iver4 900 - 2.0 kWh NiMH": {
     "battery_kwh": 2.0,
@@ -237,7 +251,8 @@
     "sensor_load_included": null,
     "sensor_load_basis": "Manufacturer endurance is payload/current dependent; exact sensor inclusion is not resolved.",
     "source_url": "https://www.l3harris.com/all-capabilities/iver4-900-auv",
-    "source_note": "L3Harris Iver4 900 standard NiMH: 2 kWh and 20+ h. Replaces the unsupported 14-h Navy-alias entry. Recharge is a 4 h/kWh estimate."
+    "source_note": "L3Harris Iver4 900 standard NiMH: 2 kWh and 20+ h. Replaces the unsupported 14-h Navy-alias entry. Recharge is a 4 h/kWh estimate.",
+    "size_class": "S"
   },
   "Iver4 900 - 4.0 kWh Li-ion": {
     "battery_kwh": 4.0,
@@ -253,7 +268,8 @@
     "sensor_load_included": null,
     "sensor_load_basis": "Manufacturer endurance is payload/current dependent; exact sensor inclusion is not resolved.",
     "source_url": "https://www.l3harris.com/all-capabilities/iver4-900-auv",
-    "source_note": "L3Harris Iver4 900 Li-ion: 4 kWh and 40+ h. Recharge is a 4 h/kWh estimate."
+    "source_note": "L3Harris Iver4 900 Li-ion: 4 kWh and 40+ h. Recharge is a 4 h/kWh estimate.",
+    "size_class": "S"
   },
   "Sentry - 13 kWh validation profile": {
     "battery_kwh": 13.0,
@@ -269,7 +285,8 @@
     "sensor_load_included": null,
     "sensor_load_basis": "WHOI states endurance depends on mission type; exact sensor-load inclusion differs by mission.",
     "source_url": "https://www.whoi.edu/wp-content/uploads/2019/01/2016-02-18_A_Scientists_Guide_to_Sentry_Cruise_Planning_and_Proposal_Writting_96584.pdf",
-    "source_note": "WHOI Sentry 13-kWh validation profile uses the conservative 18-h endpoint of the published 18-40 h range. Nominal 1.2 kt is a validation-profile value based on the field missions, not a manufacturer cruise-speed claim."
+    "source_note": "WHOI Sentry 13-kWh validation profile uses the conservative 18-h endpoint of the published 18-40 h range. Nominal 1.2 kt is a validation-profile value based on the field missions, not a manufacturer cruise-speed claim.",
+    "size_class": "L"
   },
   "Sentry - 18 kWh validation profile": {
     "battery_kwh": 18.0,
@@ -285,7 +302,8 @@
     "sensor_load_included": null,
     "sensor_load_basis": "WHOI states endurance depends on mission type and depth.",
     "source_url": "https://www.whoi.edu/wp-content/uploads/2019/02/18G0622-Sentry-One-Pager-Masako-Mtominaga.pdf",
-    "source_note": "WHOI Sentry 18-kWh validation profile uses the conservative 26-h endpoint of the published 26-60 h on-bottom range. Nominal 1.2 kt is a validation-profile value based on the field missions."
+    "source_note": "WHOI Sentry 18-kWh validation profile uses the conservative 26-h endpoint of the published 26-60 h on-bottom range. Nominal 1.2 kt is a validation-profile value based on the field missions.",
+    "size_class": "L"
   },
   "Autosub5 - 25 kWh validation profile": {
     "battery_kwh": 25.0,
@@ -301,7 +319,8 @@
     "sensor_load_included": true,
     "sensor_load_basis": "The cited 24-h statement explicitly says all sensors operating.",
     "source_url": "https://nora.nerc.ac.uk/id/eprint/536754/",
-    "source_note": "NOC Autosub5 validation profile: five 5-kWh batteries and approximately 24 h with all sensors operating. Nominal 2.5 kt and 3.0-kt planning max are validation-profile values based on JC237 mission speeds. Recharge is a 4 h/kWh estimate."
+    "source_note": "NOC Autosub5 validation profile: five 5-kWh batteries and approximately 24 h with all sensors operating. Nominal 2.5 kt and 3.0-kt planning max are validation-profile values based on JC237 mission speeds. Recharge is a 4 h/kWh estimate.",
+    "size_class": "L"
   },
   "GEOMAR ABYSS - 11.2 kWh": {
     "battery_kwh": 11.2,
@@ -317,6 +336,7 @@
     "sensor_load_included": true,
     "sensor_load_basis": "GEOMAR ties the 20-h endurance condition directly to the sidescan-sonar configuration.",
     "source_url": "https://www.geomar.de/st/auv/autonome-unterwasserfahrzeuge/auv-abyss/spezifikation-/-logistik-1",
-    "source_note": "GEOMAR ABYSS: two 5.6-kWh Li-ion batteries (11.2 kWh total), 2.5-3.5 kt, up to 20 h with sidescan sonar and up to 16 h with multibeam sonar. The 20-h sidescan condition is used here. Recharge is a 4 h/kWh estimate."
+    "source_note": "GEOMAR ABYSS: two 5.6-kWh Li-ion batteries (11.2 kWh total), 2.5-3.5 kt, up to 20 h with sidescan sonar and up to 16 h with multibeam sonar. The 20-h sidescan condition is used here. Recharge is a 4 h/kWh estimate.",
+    "size_class": "L"
   }
 }
