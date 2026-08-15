@@ -1,36 +1,26 @@
-# Source Register Addendum - Public Vehicle Baseline
+# Vehicle catalog sources
 
-This addendum records the public vehicle data used to update `data/vehicle_catalog.json`. `UUV Project file Notes.md` is treated as the current validated public-facing system baseline for the listed Navy/program variants.
+This is the short source list for the selectable vehicle entries.
 
-| Vehicle catalog entry | Public source basis | Values used in model | Notes |
-| --- | --- | --- | --- |
-| REMUS 100B - 1.5 kWh | Public REMUS 100B datasheet | 1.5 kWh, 8 hr endurance, 3 kt nominal speed, 4.5 kt max speed, 6 hr recharge | Included as provisional until the final official HII/Hydroid source file is attached to the repo. |
-| REMUS 300 - 1.5 kWh | HII REMUS 300 datasheet | 1.5 kWh, 10 hr endurance, 3 kt nominal speed, 4 kt max speed, 6 hr recharge | Manufacturer source. |
-| REMUS 300 - 3.0 kWh Standard | HII REMUS 300 datasheet | 3.0 kWh, 20 hr endurance, 3 kt nominal speed, 4 kt max speed, 12 hr recharge | Manufacturer source. |
-| REMUS 300 - 4.5 kWh | HII REMUS 300 datasheet | 4.5 kWh, 30 hr endurance, 3 kt nominal speed, 4 kt max speed, 18 hr recharge | Manufacturer source. |
-| Bluefin-9 - 1.5 kWh | Bluefin-9 public technical sheet | 1.5 kWh, 12 hr endurance at 3 kt, 5 kt max speed | Recharge time not published; uses 4 hr/kWh planning estimate. |
-| Bluefin-12D - 7.5 kWh | Bluefin-12D public technical sheet | 7.5 kWh, 30 hr endurance at 3 kt, 5 kt max speed | Recharge time not published; uses 4 hr/kWh planning estimate. |
-| Iver3 EP - 0.8 kWh | L3Harris Iver3 public specification page | 0.8 kWh, 8 hr conservative endurance from 8-14 hr range, 2.5 kt nominal speed, 4 kt max speed | Recharge time not published; uses 4 hr/kWh planning estimate. |
-| Iver4 580 - 0.78 kWh | L3Harris Iver4 public specification page | 0.78 kWh, 6 hr endurance, 4.5 kt survey speed, 5 kt max speed | Recharge time not published; uses 4 hr/kWh planning estimate. |
-| Lionfish (Next-Gen MCM - Standard) | Validated public-facing system notes and public spec sheets | 1.5 kWh, 10 hr endurance, 3 kt nominal speed, 5 kt max speed, 4 hr recharge | Expeditionary SUUV based on HII REMUS 300 1-battery module. |
-| Lionfish (Next-Gen MCM - Extended) | Validated public-facing system notes and public spec sheets | 4.5 kWh, 30 hr endurance, 3 kt nominal speed, 5 kt max speed, 8 hr recharge | Expeditionary SUUV based on HII REMUS 300 3-battery module configuration. |
-| Yellow Moray (Submarine TTL) | Validated public-facing system notes and public spec sheets | 3.0 kWh, 20 hr endurance, 3 kt nominal speed, 5 kt max speed, 6 hr recharge | Submarine-launched TTL SUUV based on HII REMUS 300 medium configuration. |
-| Viperfish (Deep Water MCM) | Validated public-facing system notes and public spec sheets | 4.5 kWh, 30 hr endurance, 3 kt nominal speed, 5 kt max speed, 8 hr recharge | Deep-water MUUV planning entry based on REMUS 300 4.5 model. |
-| Iver3 580 (Legacy VSW) | Validated public-facing system notes and public spec sheets | 0.8 kWh, 8 hr endurance, 2.5 kt nominal speed, 4 kt max speed, 3 hr recharge | Legacy VSW planning entry from public Iver3 specifications. |
-| Iver4 900 (Expeditionary MCM) | Validated public-facing system notes and public spec sheets | 2.0 kWh, 14 hr endurance, 3 kt nominal speed, 5 kt max speed, 5 hr recharge | Expeditionary MCM planning entry from public Iver4 900 specifications. |
-| MK19 Mod 0 Razorback (DDS) | Validated public-facing system notes and public spec sheets | 7.0 kWh, 24 hr endurance, 3 kt nominal speed, 4 kt max speed, no recharge | Legacy DDS UUV based on REMUS 600 alkaline battery configuration. |
-| MK20 Mod 0 Razorback (TTL&R) | Validated public-facing system notes and public spec sheets | 5.2 kWh, 18.4 hr endurance, 3 kt nominal speed, 6 kt max speed, 8 hr recharge | Submarine TTL&R MUUV planning entry. |
-| AN/AQS-23 Barracuda | Validated public-facing system notes and public spec sheets | 0.8 kWh, 1.5 hr endurance, 4 kt nominal speed, 10 kt max speed, no recharge | One-way non-rechargeable vehicle inventory planning entry. |
-| Next-Gen MUUV (REMUS 620) | HII REMUS 620 public specifications recorded in project notes | 15.0 kWh, 110 hr endurance, 3 kt nominal speed, 8 kt max speed, 12 hr recharge | Extended multi-day TTL&R and expeditionary planning entry. |
-
-## Shared planning factors
-
-| Factor | Value | Basis |
-| --- | ---: | --- |
-| Usable battery fraction | Low/Medium/High condition distributions | Current model samples practical usable battery fraction separately from operator reserve margin and temperature derating. Legacy catalog `0.88` values remain as source-visible baseline data. |
-| Missing recharge-time estimate | `4 * battery_kwh` hours | Project planning estimate until manufacturer recharge data are available. |
-| Payload mass burden | Energy-class-scaled multiplier in `core/energy.py` | Active payload burden does not require public dry-weight data. |
-
-## Data gaps
-
-- Vehicle dry weight remains optional metadata only and is not an active payload-burden dependency.
+| Vehicle | Source |
+| --- | --- |
+| REMUS 100B - 1.5 kWh | https://hii.com/wp-content/uploads/2022/07/REMUS-100B-3-31-22_web.pdf |
+| REMUS 130 - 1.5 kWh | https://www.hii.com/products/remus-130-uuvs |
+| REMUS 300 - 1.5 kWh | https://www.hii.com/news/photo-release-huntington-ingalls-industries-announces-commercial-release-of-remus-300-unmanned-underwater-vehicle |
+| REMUS 300 - 3.0 kWh | https://www.hii.com/news/photo-release-huntington-ingalls-industries-announces-commercial-release-of-remus-300-unmanned-underwater-vehicle |
+| REMUS 300 - 4.5 kWh | https://www.hii.com/news/photo-release-huntington-ingalls-industries-announces-commercial-release-of-remus-300-unmanned-underwater-vehicle |
+| REMUS 600 - 5.2 kWh | https://www.hii.com/products/remus-uuvs |
+| REMUS 620 - 3 battery / no payload | https://www.hii.com/products/remus-620-uuvs |
+| REMUS 6000 - 17.55 kWh | https://www.hii.com/products/remus-6000-uuvs |
+| Bluefin-9 - 1.9 kWh | https://gdmissionsystems.com/en/products/underwater-vehicles/bluefin-9-autonomous-underwater-vehicle |
+| Bluefin-12 - 7.6 kWh | https://gdmissionsystems.com/products/underwater-vehicles/bluefin-12-unmanned-underwater-vehicle |
+| Bluefin-21 - 13.5 kWh | https://gdmissionsystems.com/products/underwater-vehicles/bluefin-21-autonomous-underwater-vehicle |
+| Iver3 580 Standard - 0.8 kWh | https://www.l3harris.com/all-capabilities/iver3-standard-system-auv |
+| Iver3 EP - 0.8 kWh | https://www.l3harris.com/all-capabilities/iver3-ep-open-system-auv |
+| Iver4 580 - 0.78 kWh | https://www.l3harris.com/all-capabilities/iver4-580 |
+| Iver4 900 - 2.0 kWh NiMH | https://www.l3harris.com/all-capabilities/iver4-900-auv |
+| Iver4 900 - 4.0 kWh Li-ion | https://www.l3harris.com/all-capabilities/iver4-900-auv |
+| Sentry - 13 kWh validation profile | https://www.whoi.edu/wp-content/uploads/2019/01/2016-02-18_A_Scientists_Guide_to_Sentry_Cruise_Planning_and_Proposal_Writting_96584.pdf |
+| Sentry - 18 kWh validation profile | https://www.whoi.edu/wp-content/uploads/2019/02/18G0622-Sentry-One-Pager-Masako-Mtominaga.pdf |
+| Autosub5 - 25 kWh validation profile | https://nora.nerc.ac.uk/id/eprint/536754/ |
+| GEOMAR ABYSS - 11.2 kWh | https://www.geomar.de/st/auv/autonome-unterwasserfahrzeuge/auv-abyss/spezifikation-/-logistik-1 |
