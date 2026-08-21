@@ -12,7 +12,7 @@ from models.vehicle_model import VEHICLE_CATALOG
 
 
 class SpeedAwarePowerModelTests(unittest.TestCase):
-    """Checks for hotel-load floor, cubic propulsion scaling, and low-speed bounds."""
+    """Checks for hotel-load floor, cubic propulsion scaling, and vehicle speed bounds."""
 
     def test_nominal_speed_matches_catalog_average_power(self) -> None:
         """Nominal speed should preserve the public catalog battery/endurance anchor."""
@@ -27,6 +27,18 @@ class SpeedAwarePowerModelTests(unittest.TestCase):
         """Higher speed should raise the propulsion component above the nominal anchor."""
         vehicle = VEHICLE_CATALOG["REMUS 300 - 4.5 kWh"]
         self.assertGreater(speed_adjusted_power_kw(vehicle, 4.0), speed_adjusted_power_kw(vehicle, 3.0))
+
+    def test_vehicle_maximum_speed_is_allowed(self) -> None:
+        """The published maximum speed should remain inside the modeled envelope."""
+        vehicle = VEHICLE_CATALOG["REMUS 300 - 4.5 kWh"]
+        breakdown = power_model_breakdown(vehicle, vehicle.max_speed_kts)
+        self.assertEqual(breakdown.speed_kts, vehicle.max_speed_kts)
+
+    def test_speed_above_vehicle_maximum_is_rejected(self) -> None:
+        """Power calculations must not extrapolate beyond the selected vehicle's max speed."""
+        vehicle = VEHICLE_CATALOG["REMUS 300 - 4.5 kWh"]
+        with self.assertRaisesRegex(ValueError, "exceeds .* maximum speed"):
+            power_model_breakdown(vehicle, vehicle.max_speed_kts + 0.1)
 
     def test_below_nominal_speed_is_bounded_by_hotel_logic(self) -> None:
         """Slow-speed power may fall, but not below the fixed hotel-load floor."""
