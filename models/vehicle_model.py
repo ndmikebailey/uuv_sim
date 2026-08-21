@@ -10,7 +10,7 @@ from typing import Optional
 
 @dataclass(frozen=True)
 class VehicleState:
-    """Vehicle and battery assumptions used by the energy model."""
+    """Vehicle and battery values used by the energy model."""
 
     name: str
     battery_kwh: float
@@ -21,6 +21,10 @@ class VehicleState:
     usable_fraction: float
     usable_basis: str
     source_note: str
+    source_url: Optional[str] = None
+    sensor_load_included: Optional[bool] = None
+    sensor_load_basis: Optional[str] = None
+    size_class: Optional[str] = None
     dry_weight_kg: Optional[float] = None
     hotel_fraction: Optional[float] = None
     hotel_power_fraction: Optional[float] = None
@@ -33,7 +37,7 @@ class VehicleState:
 
     @property
     def average_power_kw(self) -> float:
-        """Estimate average hotel/propulsion power from battery and endurance."""
+        """Estimate average power from the battery/endurance pair."""
         return self.battery_kwh / max(self.estimated_endurance_hr, 0.1)
 
     @property
@@ -43,13 +47,10 @@ class VehicleState:
 
 
 def load_vehicle_catalog(path: str | Path | None = None) -> dict[str, VehicleState]:
-    """Load vehicle assumptions from the configuration-controlled data catalog."""
+    """Load the vehicle catalog."""
     catalog_path = Path(path) if path is not None else Path(__file__).resolve().parents[1] / "data" / "vehicle_catalog.json"
     raw_catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
-    return {
-        name: VehicleState(name=name, **values)
-        for name, values in raw_catalog.items()
-    }
+    return {name: VehicleState(name=name, **values) for name, values in raw_catalog.items()}
 
 
 VEHICLE_CATALOG: dict[str, VehicleState] = load_vehicle_catalog()

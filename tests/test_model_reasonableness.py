@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import unittest
 
 from core.assumptions import MODEL_ASSUMPTIONS, assumptions_as_rows
@@ -324,7 +325,15 @@ class ModelReasonablenessTests(unittest.TestCase):
     def test_non_rechargeable_payload_uses_clean_one_way_logic(self) -> None:
         """Non-rechargeable one-way catalog entries should not get recovery overhead."""
         result = run_energy_simulation(
-            vehicle=VEHICLE_CATALOG["AN/AQS-23 Barracuda"],
+            vehicle=replace(
+                self.vehicle,
+                name="Synthetic one-way test vehicle",
+                recharge_hr=0.0,
+                recoverable=False,
+                rechargeable=False,
+                default_payload_recovery_mode="one_way",
+                usable_fraction=1.0,
+            ),
             mission_type="Payload Delivery",
             area=manual_payload_route(10.0, 90.0),
             environment=self.environment,
@@ -366,7 +375,11 @@ class ModelReasonablenessTests(unittest.TestCase):
     def test_vehicle_specific_hotel_fraction_overrides_default(self) -> None:
         """Catalog hotel fraction should affect speed-power when present and fall back otherwise."""
         default_vehicle = VEHICLE_CATALOG["REMUS 300 - 4.5 kWh"]
-        high_hotel_vehicle = VEHICLE_CATALOG["Viperfish (Deep Water MCM)"]
+        high_hotel_vehicle = replace(
+            default_vehicle,
+            name="Synthetic high-hotel test vehicle",
+            hotel_fraction=0.45,
+        )
         default_power = estimate_power_at_speed_kw(default_vehicle, 4.0)
         explicit_default_power = estimate_power_at_speed_kw(default_vehicle, 4.0, hotel_fraction=0.40)
         self.assertAlmostEqual(default_power, explicit_default_power)

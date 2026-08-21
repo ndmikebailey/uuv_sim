@@ -279,7 +279,7 @@ class EnergyReproducibilityTests(unittest.TestCase):
 
     def test_mission_sensor_power_increases_search_energy(self) -> None:
         """Search/MCM energy should increase when segment-based sensor power is enabled."""
-        vehicle = VEHICLE_CATALOG["REMUS 300 - 4.5 kWh"]
+        vehicle = VEHICLE_CATALOG["REMUS 620 - 1 battery / no payload"]
         area = manual_rectangle_area(3.0, 3.0, 9.0)
         common = {
             "vehicle": vehicle,
@@ -309,7 +309,7 @@ class EnergyReproducibilityTests(unittest.TestCase):
 
     def test_search_transit_uses_low_sensor_range_not_mcm_range(self) -> None:
         """Additional Search/MCM transit should not carry the full active survey sensor range."""
-        vehicle = VEHICLE_CATALOG["REMUS 300 - 4.5 kWh"]
+        vehicle = VEHICLE_CATALOG["REMUS 620 - 1 battery / no payload"]
         result = run_energy_simulation(
             vehicle=vehicle,
             mission_type="Area Search / MCM",

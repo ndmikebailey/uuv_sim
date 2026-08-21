@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import csv
 import json
 import shutil
@@ -782,7 +783,7 @@ class AppCallbackSmokeTests(unittest.TestCase):
         built = main.build_mission_and_prefill("ISR", json.dumps(RECTANGLE_GEOMETRY))
         self.assertTrue(built[0], built[1])
         result = main.run_from_ui(
-            "Next-Gen MUUV (REMUS 620)",
+            "REMUS 620 - 3 batteries / no payload",
             "ISR",
             10,
             3,
@@ -810,8 +811,19 @@ class AppCallbackSmokeTests(unittest.TestCase):
 
     def test_one_way_non_rechargeable_report_uses_vehicle_inventory_language(self) -> None:
         """Non-rechargeable platforms should use vehicle-unit inventory wording."""
+        synthetic_name = "Synthetic one-way callback test vehicle"
+        main.VEHICLE_CATALOG[synthetic_name] = replace(
+            main.VEHICLE_CATALOG["REMUS 300 - 1.5 kWh"],
+            name=synthetic_name,
+            recharge_hr=0.0,
+            recoverable=False,
+            rechargeable=False,
+            default_payload_recovery_mode="one_way",
+            usable_fraction=1.0,
+        )
+        self.addCleanup(main.VEHICLE_CATALOG.pop, synthetic_name, None)
         result = main.run_from_ui(
-            "AN/AQS-23 Barracuda",
+            synthetic_name,
             "Payload Delivery",
             10,
             3,

@@ -563,6 +563,10 @@ def run_energy_simulation(
     rng = np.random.default_rng(seed_used)
     n = 1 if deterministic_mode else max(1, int(monte_carlo_runs))
     mission_sequences = max(1, int(mission_sequences))
+    sensor_load_included = vehicle.sensor_load_included is True
+    effective_mission_sensor_power_enabled = bool(
+        mission_sensor_power_enabled and not sensor_load_included
+    )
 
     current_mean = float(environment.current_speed_kts_mean if environment.current_speed_kts_mean is not None else 0.5)
     current_dir = float(environment.current_direction_deg_mean if environment.current_direction_deg_mean is not None else 0.0)
@@ -678,8 +682,12 @@ def run_energy_simulation(
             if mission_type in SEARCH_MISSIONS
             else sampled_mission_sensor_power_kw
         )
-        mission_sensor_power_kw = sampled_mission_sensor_power_kw if mission_sensor_power_enabled else 0.0
-        transit_sensor_power_kw = sampled_transit_sensor_power_kw if mission_sensor_power_enabled else 0.0
+        mission_sensor_power_kw = (
+            sampled_mission_sensor_power_kw if effective_mission_sensor_power_enabled else 0.0
+        )
+        transit_sensor_power_kw = (
+            sampled_transit_sensor_power_kw if effective_mission_sensor_power_enabled else 0.0
+        )
         mission_sensor_energy_kwh = 0.0
         active_sensor_energy_kwh = 0.0
         transit_sensor_energy_kwh = 0.0
@@ -1044,10 +1052,17 @@ def run_energy_simulation(
         recoverable=is_vehicle_recoverable(vehicle),
         recharge_allowed=bool(recharge_allowed),
     )
-    active_sensor_mode, sensor_power_basis = mission_sensor_power_basis(
-        mission_type,
-        enabled=bool(mission_sensor_power_enabled),
-    )
+    if sensor_load_included:
+        active_sensor_mode = "Included in catalog endurance"
+        sensor_power_basis = (
+            "The selected vehicle endurance already includes the stated standard "
+            "sensor/payload demand; no additional generic mission sensor power is applied."
+        )
+    else:
+        active_sensor_mode, sensor_power_basis = mission_sensor_power_basis(
+            mission_type,
+            enabled=effective_mission_sensor_power_enabled,
+        )
 
     summary = {
         "platform": vehicle.name,
@@ -1125,7 +1140,10 @@ def run_energy_simulation(
         "low_speed_penalty_kw": input_power_breakdown.low_speed_penalty_kw,
         "hotel_power_fraction": input_power_breakdown.hotel_fraction,
         "min_efficient_speed_kts": input_power_breakdown.min_efficient_speed_kts,
-        "mission_sensor_power_enabled": bool(mission_sensor_power_enabled),
+        "mission_sensor_power_requested": bool(mission_sensor_power_enabled),
+        "mission_sensor_power_enabled": effective_mission_sensor_power_enabled,
+        "sensor_load_included_in_endurance": sensor_load_included,
+        "sensor_load_inclusion_basis": vehicle.sensor_load_basis or "",
         "mission_sensor_power_mean_kw": float(np.mean(mission_sensor_power_arr)),
         "mission_sensor_power_p10_kw": float(np.percentile(mission_sensor_power_arr, 10)),
         "mission_sensor_power_p50_kw": float(np.percentile(mission_sensor_power_arr, 50)),
@@ -1240,9 +1258,16 @@ def run_energy_simulation(
         ("Sensor-load basis", summary["mission_sensor_power_basis"], ""),
         (
             "Sensor-use logic",
-            "Active search/survey receives Search/MCM sensor-mode power; added transit receives Route/Transit sensor-mode power."
-            if mission_type in SEARCH_MISSIONS
-            else "",
+            (
+                "Published endurance already includes the stated standard sensor/payload demand; "
+                "no generic mission sensor power is added."
+                if sensor_load_included
+                else (
+                    "Active search/survey receives Search/MCM sensor-mode power; added transit receives Route/Transit sensor-mode power."
+                    if mission_type in SEARCH_MISSIONS
+                    else "Generic mission sensor-mode power is added for this mission type."
+                )
+            ),
             "",
         ),
         ("Carried equipment weight", max(float(payload_weight_kg or 0.0), 0.0), "kg"),

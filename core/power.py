@@ -41,6 +41,18 @@ def _vehicle_float(vehicle: VehicleState, attr_names: tuple[str, ...], default: 
     return default
 
 
+def _validated_vehicle_speed_kts(vehicle: VehicleState, speed_kts: float) -> float:
+    """Return a bounded positive speed, rejecting values above the vehicle envelope."""
+    requested_speed = float(speed_kts)
+    max_speed = max(float(vehicle.max_speed_kts), 0.1)
+    if requested_speed > max_speed:
+        raise ValueError(
+            f"Requested speed {requested_speed:.2f} kt exceeds "
+            f"{vehicle.name} maximum speed of {max_speed:.2f} kt."
+        )
+    return max(requested_speed, 0.1)
+
+
 def power_model_breakdown(
     vehicle: VehicleState,
     speed_kts: float,
@@ -51,7 +63,7 @@ def power_model_breakdown(
     low_speed_penalty_fraction: float | None = None,
 ) -> PowerModelBreakdown:
     """Return speed-aware planning power and component diagnostics."""
-    v = max(float(speed_kts), 0.1)
+    v = _validated_vehicle_speed_kts(vehicle, speed_kts)
     v_nom = max(float(vehicle.nominal_speed_kts), 0.1)
     bounded_nominal_scale = _clamp(float(nominal_power_scale), 0.85, 1.20)
     p_nom = max(float(vehicle.average_power_kw) * bounded_nominal_scale, 0.001)
